@@ -16,10 +16,10 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
@@ -76,7 +76,7 @@ jobs:
       shell: bash
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.os }}-build
         path: dist/
@@ -101,13 +101,10 @@ jobs:
       run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
 
     - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ steps.package-version.outputs.VERSION }}
-        release_name: Release v${{ steps.package-version.outputs.VERSION }}
+        name: Release v${{ steps.package-version.outputs.VERSION }}
         body: |
           ## Changes in this Release
           - Check the commit history for details
@@ -116,3 +113,4 @@ jobs:
           Download the appropriate build for your platform from the artifacts below.
         draft: true
         prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}
