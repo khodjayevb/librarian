@@ -1,12 +1,14 @@
 # Librarian - Development Plan
 
 ## Project Overview
+
 **Name:** Librarian
 **Purpose:** Personal book catalog application for macOS
 **Status:** Phase 5 Complete - Advanced Search & Filtering Ready
 **Last Updated:** 2026-03-01
 
 ### Core Requirements
+
 - Catalog PDF books from a Books folder on external storage
 - Support for both searchable and scanned PDFs
 - Russian and English language support
@@ -20,6 +22,7 @@
 ## Current Status Summary
 
 ### ✅ What's Working
+
 - Full-stack application running (Electron + React + Express)
 - SQLite database with complete schema
 - RESTful API endpoints for all entities
@@ -43,6 +46,7 @@
 - **GitHub Actions CI/CD pipeline**
 
 ### 🚧 Next Priority Tasks
+
 1. **Author Extraction from PDF Metadata**
    - Extract author info from PDF document properties
    - Improve author parsing from filenames
@@ -58,6 +62,7 @@
    - Drag and drop organization
 
 ### 📝 Known Issues
+
 - OCR not fully implemented (placeholder only)
 - Full-text search within PDFs not implemented
 - No reading progress tracking yet
@@ -67,6 +72,7 @@
 ## Technology Stack
 
 ### Frontend
+
 - **Framework:** React 18.x
 - **Desktop Framework:** Electron 28.x
 - **UI Components:** Custom components (no paid libraries)
@@ -74,12 +80,14 @@
 - **State Management:** React hooks + Context
 
 ### Backend
+
 - **Runtime:** Node.js 20.x LTS
 - **API Framework:** Express.js
 - **Database:** SQLite3 with better-sqlite3
 - **Logging:** Winston
 
 ### PDF Processing
+
 - **Text Extraction:** pdf-parse v1.1.1
 - **OCR Engine:** Tesseract.js 5.x (planned)
 - **Thumbnail Generation:** pdf2pic + GraphicsMagick
@@ -87,6 +95,7 @@
 - **Language Detection:** Franc
 
 ### Utilities
+
 - **File Watching:** Chokidar
 - **Build System:** GitHub Actions
 - **Testing:** Jest + React Testing Library
@@ -96,6 +105,7 @@
 ## Development Phases
 
 ### Phase 1: Foundation ✅ COMPLETE
+
 - [x] Define technology stack
 - [x] Initialize Electron + React project
 - [x] Set up development environment
@@ -104,6 +114,7 @@
 - [x] Design initial database schema
 
 ### Phase 2: Core Backend ✅ COMPLETE
+
 - [x] Build Express API server
 - [x] Implement file system scanner
 - [x] Create PDF metadata extractor
@@ -112,6 +123,7 @@
 - [x] Set up file watcher for Books folder
 
 ### Phase 3: CI/CD & UI Components ✅ COMPLETE
+
 - [x] GitHub Actions workflow setup
 - [x] Multi-platform builds (macOS, Windows, Linux)
 - [x] Automated releases with artifacts
@@ -121,6 +133,7 @@
 - [x] Open PDF functionality
 
 ### Phase 4: Visual Enhancements ✅ COMPLETE
+
 - [x] **PDF cover thumbnail generation**
   - [x] Extract first page of PDF as cover image
   - [x] Generate and cache thumbnails (pdf2pic + GraphicsMagick)
@@ -132,6 +145,7 @@
   - [x] Cross-platform PDF opening support
 
 ### Phase 5: Advanced Search & Filtering ✅ COMPLETE
+
 - [x] **Advanced filtering UI**
   - [x] Tag filter (multi-select with AND logic)
   - [x] Author filter dropdown
@@ -155,6 +169,7 @@
   - [x] Real-time filter updates
 
 ### Phase 6: Polish & Advanced Features ⚙️ IN PROGRESS
+
 - [ ] Author extraction from PDF metadata
 - [ ] Multi-select for batch operations
 - [ ] Collections/shelves system
@@ -237,6 +252,7 @@ reading_progress (
 ## API Endpoints
 
 ### Books
+
 - `GET /api/books` - List all books with pagination, filtering, and sorting
 - `GET /api/books/:id` - Get book details
 - `POST /api/books` - Add new book manually
@@ -247,10 +263,12 @@ reading_progress (
 - `POST /api/books/thumbnails/batch` - Batch generate thumbnails
 
 ### Search & Filter
+
 - `GET /api/books?search=&tags=&author=&fileType=&sortBy=&sortOrder=` - Advanced filtering
 - `GET /api/books/recent` - Recently added/opened
 
 ### Tags & Categories
+
 - `GET /api/tags` - List all tags
 - `POST /api/tags` - Create new tag
 - `GET /api/books/:id/tags` - Get tags for a book
@@ -260,6 +278,7 @@ reading_progress (
 - `POST /api/categories` - Create category
 
 ### System
+
 - `POST /api/scan` - Trigger manual scan
 - `POST /api/books/process` - Batch process metadata
 - `GET /api/stats` - Library statistics
@@ -271,6 +290,7 @@ reading_progress (
 ## Features Backlog
 
 ### Must Have (MVP) ✅
+
 - ✅ PDF file discovery and import
 - ✅ Basic metadata extraction
 - ✅ Search by title/author
@@ -283,6 +303,7 @@ reading_progress (
 - ✅ File system monitoring (implemented)
 
 ### Should Have ⚙️
+
 - ⏳ Enhanced OCR for scanned PDFs
 - ⏳ Author extraction from PDF metadata
 - ⏳ Multi-select for batch operations
@@ -291,6 +312,7 @@ reading_progress (
 - ⏳ Quick preview panel
 
 ### Nice to Have 📋
+
 - 📋 Full-text search inside PDFs
 - 📋 Auto-tagging suggestions
 - 📋 Duplicate detection
@@ -302,6 +324,7 @@ reading_progress (
 - 📋 Statistics dashboard
 
 ### Future Ideas 💡
+
 - 💡 EPUB support
 - 💡 Cloud sync (optional)
 - 💡 Mobile companion app
@@ -314,24 +337,28 @@ reading_progress (
 ## Technical Decisions
 
 ### Why Electron?
+
 - Native macOS app experience
 - Access to file system
 - Offline functionality
 - No deployment costs
 
 ### Why SQLite?
+
 - Zero configuration
 - Single file database
 - Fast for local queries
 - Perfect for single-user apps
 
 ### Why Tesseract.js?
+
 - Completely free
 - Runs offline
 - Supports Russian & English
 - No API limits
 
 ### Why pdf2pic + GraphicsMagick?
+
 - High-quality PDF thumbnails
 - Fast processing
 - Reliable cross-platform support
@@ -342,7 +369,8 @@ reading_progress (
 ## Development Guidelines
 
 ### Code Structure
-```
+
+```text
 Bibliotheka/
 ├── electron/
 │   ├── main.js
@@ -378,12 +406,14 @@ Bibliotheka/
 ```
 
 ### Naming Conventions
+
 - Components: PascalCase
 - Files: camelCase
 - Database: snake_case
 - API endpoints: kebab-case
 
 ### Git Workflow
+
 - Main branch: stable releases
 - Develop branch: active development
 - Feature branches: feature/description
@@ -394,6 +424,7 @@ Bibliotheka/
 ## Performance Metrics
 
 ### Current Performance ✅
+
 - ✅ Can import 272+ books without issues
 - ✅ Search results return instantly with filtering
 - ✅ App starts in < 2 seconds
@@ -402,6 +433,7 @@ Bibliotheka/
 - ✅ Smooth scrolling with sticky headers
 
 ### Target Metrics
+
 - [ ] Can handle 5000+ books efficiently
 - [ ] OCR accuracy > 80% for good scans
 - [ ] Full-text search in < 1 second
@@ -412,6 +444,7 @@ Bibliotheka/
 ## Changelog
 
 ### 2026-03-01 - Phase 5 Complete - Advanced Search & Filtering
+
 - ✅ **Phase 5 Complete**: Advanced filtering and sorting system
 - Implemented multi-criteria filtering:
   - Tag filtering with multi-select (AND logic)
@@ -434,6 +467,7 @@ Bibliotheka/
   - Improved visual hierarchy
 
 ### 2026-03-01 - Phase 4 Complete - Visual Enhancements
+
 - ✅ **Phase 4 Complete**: PDF thumbnails and quick open functionality
 - Implemented PDF thumbnail generation:
   - Using pdf2pic + GraphicsMagick for high-quality thumbnails
@@ -455,6 +489,7 @@ Bibliotheka/
   - Generate Covers button for batch processing
 
 ### 2026-03-01 - Phase 3 Complete - CI/CD & UI Components
+
 - ✅ **Phase 3 Complete**: CI/CD pipeline and core UI components
 - Created comprehensive CI/CD pipeline with GitHub Actions:
   - Multi-platform builds (macOS, Windows, Linux)
@@ -473,6 +508,7 @@ Bibliotheka/
   - Improved response handling
 
 ### 2026-03-01 - Phase 2 Complete - Core Backend
+
 - ✅ **Phase 2 Complete**: PDF processing pipeline fully functional
 - Implemented PDF metadata extraction with pdf-parse v1.1.1
 - Added language detection using franc library
@@ -482,6 +518,7 @@ Bibliotheka/
 - Fixed critical bugs and improved processing accuracy
 
 ### 2026-03-01 - Phase 1 Complete - Foundation
+
 - ✅ **Phase 1 Complete**: Foundation established
 - Implemented Electron + React + Express stack
 - Created complete SQLite database schema
