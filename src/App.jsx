@@ -197,11 +197,13 @@ function App() {
                       book.pdf_type === 'searchable' ? 'bg-green-50 text-green-700' :
                       book.pdf_type === 'scanned' ? 'bg-orange-50 text-orange-700' :
                       book.pdf_type === 'mixed' ? 'bg-purple-50 text-purple-700' :
+                      book.pdf_type === 'unknown' ? 'bg-yellow-50 text-yellow-700' :
                       'bg-gray-50 text-gray-600'
                     }`}>
                       {book.pdf_type === 'searchable' ? '📝 Searchable' :
                        book.pdf_type === 'scanned' ? '📷 Scanned' :
                        book.pdf_type === 'mixed' ? '📑 Mixed' :
+                       book.pdf_type === 'unknown' ? '❓ Unknown' :
                        book.pdf_type}
                     </span>
                     {book.needs_review === 1 && (

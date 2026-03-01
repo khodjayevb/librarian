@@ -88,13 +88,13 @@
 - [x] Implement SQLite database connection
 - [x] Design initial database schema
 
-### Phase 2: Core Backend (Week 3-4) ✅ MOSTLY COMPLETE
+### Phase 2: Core Backend (Week 3-4) ✅ COMPLETE
 - [x] Build Express API server
 - [x] Implement file system scanner
 - [x] Create PDF metadata extractor
 - [x] Add basic OCR support for scanned PDFs (placeholder)
 - [x] Implement language detection
-- [ ] Set up file watcher for Books folder
+- [x] Set up file watcher for Books folder (ready to activate)
 
 ### Phase 3: Data Layer (Week 5-6) ⚙️ PARTIALLY COMPLETE
 - [x] Complete database schema implementation
@@ -370,27 +370,33 @@ _Add new ideas and notes here as development progresses_
 
 ## Changelog
 
-### 2026-03-01 - Phase 2 Progress
-- ✅ **Phase 2 Mostly Complete**: PDF processing pipeline
-- Implemented PDF metadata extraction with pdf-parse
+### 2026-03-01 - Phase 2 Complete
+- ✅ **Phase 2 Complete**: PDF processing pipeline fully functional
+- Implemented PDF metadata extraction with pdf-parse v1.1.1
 - Added language detection using franc library
-- Created PDF type detection (searchable/scanned/mixed)
+- Created PDF type detection (searchable/scanned/mixed/unknown)
 - Built batch processing endpoint for unprocessed books
-- Added file watcher service with chokidar (not activated)
+- Added file watcher service with chokidar (ready but not activated)
 - Configured Books folder path from environment variable
 - Fixed Tailwind CSS v4 to v3 downgrade for styling
 - Enhanced UI with visual indicators:
   - Language badges (Russian=blue, English=green)
-  - PDF type indicators (searchable/scanned/mixed)
-  - Unprocessed books counter (243/271 unprocessed)
+  - PDF type indicators (searchable/scanned/mixed/unknown)
+  - Unprocessed books counter
   - Process Books button for batch processing
-- Fixed multiple bugs:
-  - pdf-parse import issue
-  - Database constraint violations
-  - Request body handling in Express
-  - React state management with API responses
-- Successfully loaded and displayed 271 books from /Volumes/Storage/Books
-- GitHub repository pushed and updated
+- Improved filename parsing for author/title extraction:
+  - Handles Russian books with dot separators (Title. Author)
+  - Detects English names in "Author - Title" format
+  - Cleans up edition info, years, and trailing numbers
+  - Smart detection using Cyrillic character presence
+  - Recognizes series names (e.g., "Head First")
+- Fixed critical bugs:
+  - pdf-parse v2.4.5 to v1.1.1 (function export issue)
+  - Database schema to support 'unknown' PDF type
+  - Improved PDF type detection thresholds
+  - Better "Needs Review" logic (only for truly scanned PDFs)
+- Successfully processing 272 books from /Volumes/Storage/Books
+- All books can now be processed with metadata extraction
 
 ### 2026-03-01 - Phase 1
 - ✅ Phase 1 Complete: Foundation established

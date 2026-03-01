@@ -46,16 +46,20 @@ class PDFProcessor {
       // Calculate average characters per page
       const avgCharsPerPage = pageCount > 0 ? textLength / pageCount : 0;
 
-      if (avgCharsPerPage < 50) {
-        return 'scanned'; // Likely just has page numbers or minimal text
-      } else if (avgCharsPerPage < 500) {
+      console.log(`PDF analysis: ${path.basename(filePath)} - ${avgCharsPerPage} chars/page, ${pageCount} pages total`);
+
+      // Adjusted thresholds for better detection
+      if (avgCharsPerPage < 20) {
+        return 'scanned'; // Likely just has page numbers or no text
+      } else if (avgCharsPerPage < 200) {
         return 'mixed'; // Has some text but probably incomplete
       } else {
-        return 'searchable'; // Full text content
+        return 'searchable'; // Full text content (most books have 1000+ chars/page)
       }
     } catch (error) {
       console.error('Error detecting PDF type:', error);
-      return 'scanned'; // Default to scanned if we can't read it
+      // Don't default to scanned - try to make a better guess
+      return 'unknown'; // Will be handled differently
     }
   }
 
@@ -168,7 +172,7 @@ class PDFProcessor {
       filePath,
       fileName: path.basename(filePath),
       fileSize: 0,
-      pdfType: 'scanned', // Default to scanned
+      pdfType: 'unknown', // Default to unknown
       metadata: null,
       language: 'unknown',
       ocrData: null,
@@ -194,10 +198,18 @@ class PDFProcessor {
         console.log(`Detected language: ${result.language}`);
       }
 
-      // If it's a scanned PDF, perform OCR (sample mode)
-      if (result.pdfType === 'scanned' || result.pdfType === 'mixed') {
+      // Only perform OCR and mark for review if it's truly scanned
+      if (result.pdfType === 'scanned') {
         console.log('PDF appears to be scanned, OCR would be performed here');
         result.ocrData = await this.performOCR(filePath, { sampleMode: true });
+        result.needsReview = true;
+      } else if (result.pdfType === 'mixed') {
+        console.log('PDF has mixed content (some text extractable)');
+        // Mixed PDFs have some text, so don't mark as needs review
+        result.needsReview = false;
+      } else if (result.pdfType === 'unknown') {
+        console.log('PDF type could not be determined');
+        // Unknown PDFs might be corrupted or have other issues
         result.needsReview = true;
       }
 
@@ -205,27 +217,91 @@ class PDFProcessor {
       if (!result.metadata?.title || !result.metadata?.author) {
         const fileName = path.basename(filePath, '.pdf');
 
+        // Clean up filename - remove common suffixes and numbers at the end
+        let cleanFileName = fileName
+          .replace(/_\d+$/, '') // Remove trailing _5334 type numbers
+          .replace(/\s*-\s*\d{4}$/, '') // Remove trailing year - 2025
+          .replace(/,?\s*\d+[-е]?\s*(изд|издание|edition|ed)\.?$/i, '') // Remove edition info
+          .trim();
+
         // Try to parse filename for title and author
-        // Common patterns: "Author - Title", "Title by Author", etc.
         const patterns = [
-          /^(.+?)\s*[-–]\s*(.+)$/, // Author - Title
-          /^(.+?)\s+by\s+(.+)$/i,  // Title by Author
+          // Specific patterns first
+          /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*[-–—]\s*(.+)$/, // English Name - Title
+          /^(.+?)\s*[-–—]\s*(.+?)\s*[-–—]\s*\d{4}$/, // Author - Title - Year
+          /^(.+?)\s*[-–—]\s*(.+)$/, // Generic dash separator
+          /^(.+?)\.\s+(.+)$/,       // Title. Subtitle or Series. Title
+          /^(.+?),\s*(.+)$/,        // Author, Title
+          /^(.+?)\s+by\s+(.+)$/i,   // Title by Author
           /^(.+?)\s*\((.+?)\)$/,    // Title (Author)
         ];
 
-        let extractedTitle = fileName;
+        let extractedTitle = cleanFileName;
         let extractedAuthor = null;
 
         for (const pattern of patterns) {
-          const match = fileName.match(pattern);
+          const match = cleanFileName.match(pattern);
           if (match) {
-            // Assume first pattern is Author - Title
+            const part1 = match[1].trim();
+            const part2 = match[2].trim();
+
+            // Check if parts contain Cyrillic characters
+            const hasCyrillic = (text) => /[А-Яа-яЁё]/.test(text);
+
+            // Check if looks like an author name (First Last or Last First format)
+            const looksLikeAuthor = (text) => {
+              const words = text.split(/\s+/);
+              // 2-3 words, first word capitalized, no special chars except dots
+              return words.length >= 2 && words.length <= 4 &&
+                     /^[A-ZА-ЯЁ][a-zа-яё]+/.test(words[0]) &&
+                     !/[&+#@]/.test(text);
+            };
+
             if (pattern === patterns[0]) {
-              extractedAuthor = match[1].trim();
-              extractedTitle = match[2].trim();
+              // English Name pattern - always Author - Title
+              extractedAuthor = part1;
+              extractedTitle = part2;
+            } else if (pattern === patterns[1] || pattern === patterns[2]) {
+              // Dash patterns
+              if (looksLikeAuthor(part1)) {
+                extractedAuthor = part1;
+                extractedTitle = part2;
+              } else if (looksLikeAuthor(part2)) {
+                extractedTitle = part1;
+                extractedAuthor = part2;
+              } else if (hasCyrillic(part1) && !hasCyrillic(part2)) {
+                // Cyrillic title, non-Cyrillic might be author
+                extractedTitle = part1;
+                extractedAuthor = part2;
+              } else if (!hasCyrillic(part1) && hasCyrillic(part2)) {
+                // Non-Cyrillic might be author, Cyrillic title
+                extractedAuthor = part1;
+                extractedTitle = part2;
+              } else {
+                // Default: Author - Title
+                extractedAuthor = part1;
+                extractedTitle = part2;
+              }
+            } else if (pattern === patterns[3]) {
+              // Dot pattern - could be Series. Title or Title. Subtitle
+              // If first part is short (< 20 chars), probably series
+              if (part1.length < 20 && part1.split(' ').length <= 3) {
+                extractedTitle = part2; // Use the second part as main title
+                // Don't set author from series name
+              } else {
+                extractedTitle = `${part1}. ${part2}`; // Keep both as title
+              }
+            } else if (pattern === patterns[4]) {
+              // Comma pattern
+              if (looksLikeAuthor(part1)) {
+                extractedAuthor = part1;
+                extractedTitle = part2;
+              } else {
+                extractedTitle = cleanFileName; // Keep original if unclear
+              }
             } else {
-              extractedTitle = match[1].trim();
-              extractedAuthor = match[2].trim();
+              extractedTitle = part1;
+              extractedAuthor = part2;
             }
             break;
           }

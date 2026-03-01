@@ -24,7 +24,7 @@ const createTables = () => {
       file_path TEXT UNIQUE NOT NULL,
       file_size INTEGER,
       page_count INTEGER,
-      pdf_type TEXT CHECK(pdf_type IN ('searchable', 'scanned', 'mixed')),
+      pdf_type TEXT CHECK(pdf_type IN ('searchable', 'scanned', 'mixed', 'unknown')),
       ocr_confidence REAL,
       needs_review INTEGER DEFAULT 0,
       manual_metadata TEXT,
