@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import BookDetailModal from './components/BookDetailModal';
 import BulkActionsModal from './components/BulkActionsModal';
 import CollectionsSidebar from './components/CollectionsSidebar';
+import FullTextSearch from './components/FullTextSearch';
 import useDarkMode from './hooks/useDarkMode';
 
 function App() {
@@ -20,6 +21,9 @@ function App() {
   const [selectedBookIds, setSelectedBookIds] = useState(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isBulkActionsModalOpen, setIsBulkActionsModalOpen] = useState(false);
+
+  // Full-text search state
+  const [showFullTextSearch, setShowFullTextSearch] = useState(false);
 
   // Advanced filtering states
   const [selectedTags, setSelectedTags] = useState([]);
@@ -366,6 +370,21 @@ function App() {
                 </div>
               )}
 
+              {/* Full-text search toggle */}
+              <button
+                onClick={() => setShowFullTextSearch(!showFullTextSearch)}
+                className={`p-2 rounded-lg transition-colors ${
+                  showFullTextSearch
+                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+                }`}
+                title={showFullTextSearch ? 'Close full-text search' : 'Open full-text search'}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16h8M8 12h8m-8-4h4M3 5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5z" />
+                </svg>
+              </button>
+
               {/* Dark mode toggle */}
               <button
                 onClick={toggleDarkMode}
@@ -527,6 +546,19 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* Full-text Search Section */}
+      {showFullTextSearch && (
+        <div className="container mx-auto px-6 py-4">
+          <FullTextSearch
+            isDark={isDark}
+            onSearchResults={(results) => {
+              // Optional: Handle search results
+              console.log('Full-text search results:', results);
+            }}
+          />
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">

@@ -184,6 +184,65 @@ const runMigrations = () => {
     db.exec('ALTER TABLE books ADD COLUMN description TEXT');
     console.log('✅ Added description column to books table');
   }
+
+  // Add metadata enrichment columns
+  const hasCategories = columns.some(col => col.name === 'categories');
+  const hasAverageRating = columns.some(col => col.name === 'average_rating');
+  const hasThumbnailUrl = columns.some(col => col.name === 'thumbnail_url');
+  const hasMetadataSource = columns.some(col => col.name === 'metadata_source');
+  const hasMetadataUpdatedAt = columns.some(col => col.name === 'metadata_updated_at');
+
+  if (!hasCategories) {
+    db.exec('ALTER TABLE books ADD COLUMN categories TEXT');
+    console.log('✅ Added categories column to books table');
+  }
+
+  if (!hasAverageRating) {
+    db.exec('ALTER TABLE books ADD COLUMN average_rating REAL');
+    console.log('✅ Added average_rating column to books table');
+  }
+
+  if (!hasThumbnailUrl) {
+    db.exec('ALTER TABLE books ADD COLUMN thumbnail_url TEXT');
+    console.log('✅ Added thumbnail_url column to books table');
+  }
+
+  if (!hasMetadataSource) {
+    db.exec('ALTER TABLE books ADD COLUMN metadata_source TEXT');
+    console.log('✅ Added metadata_source column to books table');
+  }
+
+  if (!hasMetadataUpdatedAt) {
+    db.exec('ALTER TABLE books ADD COLUMN metadata_updated_at DATETIME');
+    console.log('✅ Added metadata_updated_at column to books table');
+  }
+
+  // Add indexed_at column for full-text search tracking
+  const hasIndexedAt = columns.some(col => col.name === 'indexed_at');
+  if (!hasIndexedAt) {
+    db.exec('ALTER TABLE books ADD COLUMN indexed_at DATETIME');
+    console.log('✅ Added indexed_at column to books table');
+  }
+
+  // Add OCR-related columns
+  const hasOcrProcessed = columns.some(col => col.name === 'ocr_processed');
+  const hasOcrText = columns.some(col => col.name === 'ocr_text');
+  const hasOcrProcessedAt = columns.some(col => col.name === 'ocr_processed_at');
+
+  if (!hasOcrProcessed) {
+    db.exec('ALTER TABLE books ADD COLUMN ocr_processed INTEGER DEFAULT 0');
+    console.log('✅ Added ocr_processed column to books table');
+  }
+
+  if (!hasOcrText) {
+    db.exec('ALTER TABLE books ADD COLUMN ocr_text TEXT');
+    console.log('✅ Added ocr_text column to books table');
+  }
+
+  if (!hasOcrProcessedAt) {
+    db.exec('ALTER TABLE books ADD COLUMN ocr_processed_at DATETIME');
+    console.log('✅ Added ocr_processed_at column to books table');
+  }
 };
 
 // Initialize tables

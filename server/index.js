@@ -11,6 +11,8 @@ const tagsRouter = require('./routes/tags');
 const categoriesRouter = require('./routes/categories');
 const processRouter = require('./routes/process');
 const collectionsRouter = require('./routes/collections');
+const searchRouter = require('./routes/search');
+const ocrRouter = require('./routes/ocr');
 
 // Initialize database
 const db = require('./database/init');
@@ -56,6 +58,8 @@ app.use('/api/tags', tagsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/process', processRouter);
 app.use('/api/collections', collectionsRouter);
+app.use('/api/search', searchRouter);
+app.use('/api/ocr', ocrRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

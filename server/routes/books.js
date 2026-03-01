@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../database/init');
 const thumbnailGenerator = require('../services/thumbnailGeneratorPdf2pic');
+const metadataEnricher = require('../services/bookMetadataEnricher');
 const fs = require('fs');
 const path = require('path');
 
@@ -590,6 +591,72 @@ router.post('/:id/open', (req, res) => {
   } catch (error) {
     console.error('Error opening PDF:', error);
     res.status(500).json({ error: 'Failed to open PDF' });
+  }
+});
+
+// Metadata enrichment endpoints
+
+// Enrich single book metadata
+router.post('/:id/enrich', async (req, res) => {
+  try {
+    const bookId = req.params.id;
+    const { source, forceRefresh } = req.body;
+
+    const enrichedBook = await metadataEnricher.enrichBook(bookId, {
+      source,
+      forceRefresh
+    });
+
+    if (enrichedBook) {
+      res.json({
+        success: true,
+        book: enrichedBook,
+        message: 'Metadata enriched successfully'
+      });
+    } else {
+      res.json({
+        success: false,
+        message: 'No additional metadata found'
+      });
+    }
+  } catch (error) {
+    console.error('Metadata enrichment error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Bulk enrich metadata for multiple books
+router.post('/bulk/enrich', async (req, res) => {
+  try {
+    const { bookIds, source } = req.body;
+
+    if (!bookIds || !Array.isArray(bookIds) || bookIds.length === 0) {
+      return res.status(400).json({ error: 'Book IDs are required' });
+    }
+
+    // Start enrichment in background and return immediately
+    res.json({
+      success: true,
+      message: `Started enriching metadata for ${bookIds.length} books`
+    });
+
+    // Run enrichment asynchronously
+    metadataEnricher.enrichMultipleBooks(bookIds, { source })
+      .then(results => {
+        console.log(`Metadata enrichment complete: ${results.success.length} succeeded, ${results.failed.length} failed`);
+      })
+      .catch(error => {
+        console.error('Bulk metadata enrichment error:', error);
+      });
+  } catch (error) {
+    console.error('Bulk enrichment error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 

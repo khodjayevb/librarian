@@ -5,6 +5,7 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
   const [editedBook, setEditedBook] = useState(book || {});
   const [tags, setTags] = useState([]);
   const [newTag, setNewTag] = useState('');
+  const [isEnrichingMetadata, setIsEnrichingMetadata] = useState(false);
 
   useEffect(() => {
     setEditedBook(book || {});
@@ -79,6 +80,37 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
       fetch(`http://localhost:3001/api/books/${book.id}/open`, {
         method: 'POST',
       });
+    }
+  };
+
+  const handleEnrichMetadata = async () => {
+    if (!book?.id) return;
+
+    setIsEnrichingMetadata(true);
+    try {
+      const response = await fetch(`http://localhost:3001/api/books/${book.id}/enrich`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ forceRefresh: true }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.book) {
+        // Update the book with enriched metadata
+        onUpdate(data.book);
+        setEditedBook(data.book);
+
+        // Show success message
+        alert(`Metadata enriched successfully!\nSource: ${data.book.metadata_source || 'Multiple sources'}`);
+      } else {
+        alert(data.message || 'No additional metadata found for this book');
+      }
+    } catch (error) {
+      console.error('Failed to enrich metadata:', error);
+      alert('Failed to enrich metadata. Please try again.');
+    } finally {
+      setIsEnrichingMetadata(false);
     }
   };
 
@@ -324,16 +356,54 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
                   OCR: {book.ocr_confidence}% confidence
                 </span>
               )}
+              {book.metadata_source && (
+                <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+                  📚 {book.metadata_source}
+                </span>
+              )}
+              {book.average_rating && (
+                <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
+                  ⭐ {book.average_rating.toFixed(1)}
+                </span>
+              )}
             </div>
+
+            {/* Categories if available */}
+            {book.categories && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Categories</label>
+                <div className="flex flex-wrap gap-2">
+                  {JSON.parse(book.categories).map((category, index) => (
+                    <span key={index} className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-sm">
+                      {category}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Action Buttons */}
             <div className="flex justify-between pt-4 border-t">
-              <button
-                onClick={handleOpenFile}
-                className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600"
-              >
-                Open PDF
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleOpenFile}
+                  className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600"
+                >
+                  Open PDF
+                </button>
+
+                <button
+                  onClick={handleEnrichMetadata}
+                  disabled={isEnrichingMetadata}
+                  className={`px-4 py-2 rounded-md text-white ${
+                    isEnrichingMetadata
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-purple-500 hover:bg-purple-600'
+                  }`}
+                >
+                  {isEnrichingMetadata ? 'Fetching...' : 'Fetch Metadata'}
+                </button>
+              </div>
 
               <div className="flex gap-2">
                 {isEditing ? (
