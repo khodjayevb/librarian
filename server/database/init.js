@@ -111,8 +111,21 @@ const createTables = () => {
   console.log('✅ Database tables created successfully');
 };
 
+// Run migrations to add new columns
+const runMigrations = () => {
+  // Check if thumbnail_path column exists
+  const columns = db.prepare("PRAGMA table_info(books)").all();
+  const hasThumbnailPath = columns.some(col => col.name === 'thumbnail_path');
+
+  if (!hasThumbnailPath) {
+    db.exec('ALTER TABLE books ADD COLUMN thumbnail_path TEXT');
+    console.log('✅ Added thumbnail_path column to books table');
+  }
+};
+
 // Initialize tables
 createTables();
+runMigrations();
 
 // Helper functions
 const getStats = () => {

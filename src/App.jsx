@@ -13,6 +13,20 @@ function App() {
     !book.language || book.language === 'Not scanned'
   ).length;
 
+  // Function to open PDF
+  const handleOpenPDF = async (bookId) => {
+    try {
+      const response = await fetch(`http://localhost:3001/api/books/${bookId}/open`, {
+        method: 'POST'
+      });
+      if (!response.ok) {
+        console.error('Failed to open PDF');
+      }
+    } catch (error) {
+      console.error('Error opening PDF:', error);
+    }
+  };
+
   // Filter books based on search query
   const filteredBooks = books.filter(book => {
     const query = searchQuery.toLowerCase();
@@ -59,6 +73,31 @@ function App() {
       await loadBooks();
     } catch (error) {
       console.error('Scan failed:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGenerateThumbnails = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('http://localhost:3001/api/books/thumbnails/batch', {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Thumbnail generation started:', data);
+
+        // Refresh books after a delay to show new thumbnails
+        setTimeout(() => {
+          loadBooks();
+        }, 5000);
+      } else {
+        console.error('Failed to generate thumbnails');
+      }
+    } catch (error) {
+      console.error('Error generating thumbnails:', error);
     } finally {
       setLoading(false);
     }
@@ -144,6 +183,13 @@ function App() {
               >
                 {loading ? 'Processing...' : 'Process Books'}
               </button>
+              <button
+                onClick={handleGenerateThumbnails}
+                disabled={loading}
+                className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50"
+              >
+                📷 Generate Covers
+              </button>
             </div>
           </div>
         </div>
@@ -172,12 +218,43 @@ function App() {
             {filteredBooks.map((book) => (
               <div
                 key={book.id}
-                className="bg-white rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow cursor-pointer"
+                className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-200 cursor-pointer group relative overflow-hidden"
                 onClick={() => {
                   setSelectedBook(book);
                   setIsModalOpen(true);
                 }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenPDF(book.id);
+                }}
+                title="Double-click to open PDF"
               >
+                {/* Book Cover Image */}
+                <div className="h-48 bg-gray-100 flex items-center justify-center overflow-hidden">
+                  {book.thumbnail_url ? (
+                    <img
+                      src={book.thumbnail_url}
+                      alt={book.title || 'Book cover'}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.nextSibling.style.display = 'flex';
+                      }}
+                    />
+                  ) : null}
+                  <div className={`text-gray-400 text-6xl ${book.thumbnail_url ? 'hidden' : 'flex'}`}>
+                    📚
+                  </div>
+                </div>
+
+                {/* Hover overlay with open button */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-end justify-center pb-4 pointer-events-none">
+                  <div className="text-white text-sm font-medium">
+                    Double-click to open PDF
+                  </div>
+                </div>
+
+                <div className="p-4">
                 <h3 className="font-semibold text-gray-800 mb-2 line-clamp-2" title={book.title}>
                   {book.title || 'Untitled'}
                 </h3>
@@ -218,6 +295,7 @@ function App() {
                     )}
                   </div>
                 )}
+                </div>
               </div>
             ))}
           </div>

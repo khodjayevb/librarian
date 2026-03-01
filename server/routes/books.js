@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { db } = require('../database/init');
+const thumbnailGenerator = require('../services/thumbnailGeneratorPdfjs');
 
 // Get all books with pagination
 router.get('/', (req, res) => {
@@ -28,6 +29,13 @@ router.get('/', (req, res) => {
     params.push(limit, offset);
 
     const books = db.prepare(query).all(...params);
+
+    // Add thumbnail URLs to each book
+    books.forEach(book => {
+      if (book.thumbnail_path) {
+        book.thumbnail_url = `http://localhost:3001${book.thumbnail_path}`;
+      }
+    });
 
     // Get total count for pagination
     let countQuery = 'SELECT COUNT(*) as total FROM books WHERE 1=1';
@@ -250,6 +258,64 @@ router.delete('/:id/tags/:tagId', (req, res) => {
   } catch (error) {
     console.error('Error removing tag:', error);
     res.status(500).json({ error: 'Failed to remove tag' });
+  }
+});
+
+// Generate thumbnail for a book
+router.post('/:id/thumbnail', async (req, res) => {
+  try {
+    const book = db.prepare('SELECT id, file_path FROM books WHERE id = ?').get(req.params.id);
+
+    if (!book) {
+      return res.status(404).json({ error: 'Book not found' });
+    }
+
+    const result = await thumbnailGenerator.generateThumbnail(book.file_path, book.id);
+
+    if (result.success) {
+      // Update book record with thumbnail path
+      db.prepare('UPDATE books SET thumbnail_path = ? WHERE id = ?')
+        .run(result.thumbnail, book.id);
+
+      res.json({
+        message: 'Thumbnail generated successfully',
+        thumbnail: result.thumbnail
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to generate thumbnail' });
+    }
+  } catch (error) {
+    console.error('Error generating thumbnail:', error);
+    res.status(500).json({ error: 'Failed to generate thumbnail' });
+  }
+});
+
+// Generate thumbnails for all books
+router.post('/thumbnails/batch', async (req, res) => {
+  try {
+    const books = db.prepare('SELECT id, file_path FROM books WHERE thumbnail_path IS NULL LIMIT 50').all();
+
+    res.json({
+      message: 'Thumbnail generation started',
+      count: books.length
+    });
+
+    // Generate thumbnails in the background
+    thumbnailGenerator.generateBatch(books, (progress) => {
+      console.log(`Generating thumbnails: ${progress.current}/${progress.total}`);
+    }).then(results => {
+      // Update database with results
+      results.forEach(result => {
+        if (result.success && !result.skipped) {
+          db.prepare('UPDATE books SET thumbnail_path = ? WHERE id = ?')
+            .run(result.thumbnail, result.bookId);
+        }
+      });
+      console.log('Batch thumbnail generation complete');
+    });
+  } catch (error) {
+    console.error('Error in batch thumbnail generation:', error);
+    res.status(500).json({ error: 'Failed to start thumbnail generation' });
   }
 });
 
