@@ -189,7 +189,7 @@
   - [x] Position tracking for custom ordering
   - [x] Visual collection indicators
 
-### Phase 7: Advanced Features ⚙️ IN PROGRESS
+### Phase 7: Advanced Features ✅ COMPLETE
 
 - [x] **Dark mode theme** (COMPLETE)
   - [x] Toggle button with sun/moon icons
@@ -197,7 +197,14 @@
   - [x] System preference detection
   - [x] Smooth transitions
   - [x] All components styled for dark mode
-- [ ] Author extraction from PDF metadata
+- [x] **Advanced PDF content extraction** (COMPLETE)
+  - [x] Author extraction from PDF metadata and content
+  - [x] ISBN extraction (ISBN-10 and ISBN-13)
+  - [x] Publisher identification
+  - [x] Publication year detection
+  - [x] Edition information extraction
+  - [x] Description extraction from PDFs
+  - [x] Batch reprocessing for existing library
 - [ ] Reading progress tracking
 - [ ] Full-text search within PDFs
 - [ ] Export/import functionality
