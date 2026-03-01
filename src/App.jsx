@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import BookDetailModal from './components/BookDetailModal';
 
 function App() {
   const [books, setBooks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedBook, setSelectedBook] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Calculate stats
   const unprocessedCount = books.filter(book =>
@@ -170,6 +173,10 @@ function App() {
               <div
                 key={book.id}
                 className="bg-white rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow cursor-pointer"
+                onClick={() => {
+                  setSelectedBook(book);
+                  setIsModalOpen(true);
+                }}
               >
                 <h3 className="font-semibold text-gray-800 mb-2 line-clamp-2" title={book.title}>
                   {book.title || 'Untitled'}
@@ -216,6 +223,28 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* Book Detail Modal */}
+      <BookDetailModal
+        book={selectedBook}
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setSelectedBook(null);
+        }}
+        onUpdate={(updatedBook) => {
+          // Update the book in the list
+          setBooks(prevBooks =>
+            prevBooks.map(book =>
+              book.id === updatedBook.id ? updatedBook : book
+            )
+          );
+          // Update selected book if still open
+          if (selectedBook?.id === updatedBook.id) {
+            setSelectedBook(updatedBook);
+          }
+        }}
+      />
     </div>
   );
 }

@@ -185,4 +185,113 @@ router.delete('/:id', (req, res) => {
   }
 });
 
+// Get tags for a book
+router.get('/:id/tags', (req, res) => {
+  try {
+    const tags = db.prepare(`
+      SELECT t.id, t.name, t.color FROM tags t
+      JOIN book_tags bt ON t.id = bt.tag_id
+      WHERE bt.book_id = ?
+    `).all(req.params.id);
+
+    res.json({ tags });
+  } catch (error) {
+    console.error('Error fetching book tags:', error);
+    res.status(500).json({ error: 'Failed to fetch tags' });
+  }
+});
+
+// Add tag to book
+router.post('/:id/tags', (req, res) => {
+  try {
+    const { tag } = req.body;
+
+    if (!tag) {
+      return res.status(400).json({ error: 'Tag name is required' });
+    }
+
+    // First try to find existing tag
+    let tagRecord = db.prepare('SELECT * FROM tags WHERE name = ?').get(tag);
+
+    // If tag doesn't exist, create it
+    if (!tagRecord) {
+      const result = db.prepare('INSERT INTO tags (name) VALUES (?)').run(tag);
+      tagRecord = { id: result.lastInsertRowid, name: tag };
+    }
+
+    // Add tag to book (ignore if already exists)
+    try {
+      db.prepare('INSERT INTO book_tags (book_id, tag_id) VALUES (?, ?)').run(req.params.id, tagRecord.id);
+    } catch (err) {
+      // Tag already exists for this book, that's okay
+      if (!err.message.includes('UNIQUE constraint failed')) {
+        throw err;
+      }
+    }
+
+    res.json({ message: 'Tag added successfully', tag: tagRecord });
+  } catch (error) {
+    console.error('Error adding tag:', error);
+    res.status(500).json({ error: 'Failed to add tag' });
+  }
+});
+
+// Remove tag from book
+router.delete('/:id/tags/:tagId', (req, res) => {
+  try {
+    const result = db.prepare('DELETE FROM book_tags WHERE book_id = ? AND tag_id = ?')
+      .run(req.params.id, req.params.tagId);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Tag not found for this book' });
+    }
+
+    res.json({ message: 'Tag removed successfully' });
+  } catch (error) {
+    console.error('Error removing tag:', error);
+    res.status(500).json({ error: 'Failed to remove tag' });
+  }
+});
+
+// Open PDF file
+router.post('/:id/open', (req, res) => {
+  try {
+    const book = db.prepare('SELECT file_path FROM books WHERE id = ?').get(req.params.id);
+
+    if (!book) {
+      return res.status(404).json({ error: 'Book not found' });
+    }
+
+    // Update last opened timestamp
+    db.prepare('UPDATE books SET last_opened = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+
+    // Use platform-specific command to open PDF
+    const { exec } = require('child_process');
+    const platform = process.platform;
+
+    let command;
+    if (platform === 'darwin') {
+      // macOS
+      command = `open "${book.file_path}"`;
+    } else if (platform === 'win32') {
+      // Windows
+      command = `start "" "${book.file_path}"`;
+    } else {
+      // Linux
+      command = `xdg-open "${book.file_path}"`;
+    }
+
+    exec(command, (error) => {
+      if (error) {
+        console.error('Error opening file:', error);
+        return res.status(500).json({ error: 'Failed to open PDF file' });
+      }
+      res.json({ message: 'PDF opened successfully' });
+    });
+  } catch (error) {
+    console.error('Error opening PDF:', error);
+    res.status(500).json({ error: 'Failed to open PDF' });
+  }
+});
+
 module.exports = router;
