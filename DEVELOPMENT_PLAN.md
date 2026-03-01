@@ -35,11 +35,18 @@
 - Books folder configured (/Volumes/Storage/Books)
 
 ### 🚧 Next Priority Tasks
-1. Complete OCR implementation for scanned PDFs
-2. Process remaining unprocessed books (243/271)
-3. Add file system monitoring (chokidar)
-4. Implement book detail view
-5. Add cover thumbnail generation
+1. **PDF Cover Thumbnail Generation** (User requested)
+   - Extract first page of PDF as book cover
+   - Generate thumbnails on import/scan
+   - Cache thumbnails for performance
+   - Display covers on book cards in grid view
+2. **Quick-Open PDF from Library** (User requested)
+   - Double-click any book card to open PDF directly
+   - Add quick-open button on book cards
+   - Support keyboard navigation (Enter to open)
+3. Complete OCR implementation for scanned PDFs
+4. Add file system monitoring (chokidar)
+5. Implement advanced search filters
 
 ### 📝 Known Issues
 - OCR not fully implemented (placeholder only)
@@ -114,7 +121,14 @@
 - [x] Create book detail view (modal)
 - [x] Add edit metadata forms
 - [ ] Add filter controls (advanced)
-- [ ] Implement cover thumbnail generation
+- [ ] **Implement PDF cover thumbnail generation**
+  - [ ] Extract first page of PDF as cover image
+  - [ ] Generate and cache thumbnails
+  - [ ] Display cover images on book cards
+- [ ] **Add quick-open PDF functionality**
+  - [ ] Double-click book card to open PDF
+  - [ ] Add "Open" button on book cards
+  - [ ] Keyboard shortcut support (Enter key)
 
 ### Phase 5: Advanced Features (Week 9-10)
 - [ ] Enhance OCR with preprocessing
@@ -238,14 +252,16 @@ reading_progress (
 - ✅ Simple tagging system
 - ✅ Grid and list views
 - ⏳ File system monitoring
+- 🔴 **PDF cover thumbnails on book cards** (User Priority)
+- 🔴 **Click to open PDF from library** (User Priority)
 
 ### Should Have
 - ⏳ OCR for scanned PDFs
-- ⏳ Cover thumbnails
 - ⏳ Advanced filters
 - ⏳ Bulk operations
 - ⏳ Reading progress tracking
 - ⏳ Quick preview
+- ⏳ Keyboard shortcuts for navigation
 
 ### Nice to Have
 - 📋 Full-text search inside PDFs
@@ -372,7 +388,58 @@ _Add new ideas and notes here as development progresses_
 
 ---
 
+## Upcoming Features (User Requested)
+
+### PDF Cover Thumbnails
+**Priority: HIGH** - Display book covers (first page of PDF) on book cards
+
+#### Technical Implementation:
+1. **PDF to Image Conversion**
+   - Use `pdf2pic` or `pdfjs-dist` to extract first page
+   - Generate thumbnails at multiple sizes (small for grid, large for detail)
+   - Store in `/thumbnails` folder with book ID as filename
+
+2. **Caching Strategy**
+   - Generate thumbnails during initial scan/import
+   - Background job for existing books without thumbnails
+   - Store thumbnail path in database
+
+3. **UI Updates**
+   - Add image placeholder on book cards
+   - Lazy loading for performance
+   - Fallback to generic book icon if no thumbnail
+
+4. **API Endpoints**
+   - `GET /api/books/:id/thumbnail` - Get thumbnail URL
+   - `POST /api/books/:id/generate-thumbnail` - Force regenerate
+
+### Quick-Open PDF from Library
+**Priority: HIGH** - Direct PDF opening from book cards
+
+#### Technical Implementation:
+1. **Double-click Handler**
+   - Add `onDoubleClick` event to book cards
+   - Call existing `/api/books/:id/open` endpoint
+
+2. **Visual Indicators**
+   - Add hover effect showing "Double-click to open"
+   - Quick-open button overlay on hover
+   - Cursor change to pointer
+
+3. **Keyboard Support**
+   - Focus management for book cards
+   - Enter key to open selected book
+   - Arrow keys for navigation
+
+---
+
 ## Changelog
+
+### 2026-03-01 - User Feature Requests Added
+- Added PDF cover thumbnail generation to roadmap (HIGH priority)
+- Added quick-open PDF functionality to roadmap (HIGH priority)
+- Updated Features Backlog with user priorities
+- These features will be implemented in next development session
 
 ### 2026-03-01 - Phase 3 Complete & CI/CD Setup
 - ✅ **Phase 3 Complete**: Data layer and core UI functionality
