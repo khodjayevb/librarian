@@ -44,7 +44,8 @@ async function scanDirectory(dirPath) {
 // Trigger library scan
 router.post('/', async (req, res) => {
   try {
-    console.log(`Starting scan of: ${BOOKS_FOLDER}`);
+    const fastMode = req.query.fast === 'true' || (req.body && req.body.fast === true);
+    console.log(`Starting scan of: ${BOOKS_FOLDER} (${fastMode ? 'fast' : 'full'} mode)`);
 
     // Check if directory exists
     try {
@@ -81,45 +82,58 @@ router.post('/', async (req, res) => {
         continue;
       }
 
-      try {
-        // Process PDF to extract metadata
-        const pdfData = await pdfProcessor.processPDF(pdf.path);
+      if (fastMode) {
+        // Fast mode: just add the file without processing
+        const fileName = path.basename(pdf.name, '.pdf');
+        const title = fileName.replace(/[-_]/g, ' ');
 
-        // Insert with extracted metadata
-        const stmt = db.prepare(`
-          INSERT INTO books (
-            title, author, language, file_path, file_size,
-            page_count, pdf_type, ocr_confidence, needs_review,
-            manual_metadata, date_added, last_modified
-          ) VALUES (
-            @title, @author, @language, @file_path, @file_size,
-            @page_count, @pdf_type, @ocr_confidence, @needs_review,
-            @manual_metadata, @date_added, @last_modified
-          )
-        `);
-
-        stmt.run({
-          title: pdfData.metadata?.title || pdfData.metadata?.titleFromFilename || path.basename(pdf.name, '.pdf'),
-          author: pdfData.metadata?.author || pdfData.metadata?.authorFromFilename || null,
-          language: pdfData.language,
-          file_path: pdf.path,
-          file_size: pdf.size,
-          page_count: pdfData.metadata?.pageCount || null,
-          pdf_type: pdfData.pdfType,
-          ocr_confidence: pdfData.ocrData?.confidence || null,
-          needs_review: pdfData.needsReview ? 1 : 0,
-          manual_metadata: JSON.stringify(pdfData.metadata || {}),
-          date_added: pdf.modified.toISOString(),
-          last_modified: pdf.modified.toISOString()
-        });
-
-        added++;
-        console.log(`Processed: ${pdfData.metadata?.title || path.basename(pdf.name)}`);
-      } catch (error) {
-        console.error(`Failed to process ${pdf.path}:`, error);
-        // Fall back to simple insertion
         insertBook.run(pdf.path, pdf.size, pdf.modified.toISOString());
+
+        // Update with title extracted from filename
+        db.prepare('UPDATE books SET title = ? WHERE file_path = ?')
+          .run(title, pdf.path);
+
         added++;
+      } else {
+        // Full mode: process PDF metadata
+        try {
+          const pdfData = await pdfProcessor.processPDF(pdf.path);
+
+          const stmt = db.prepare(`
+            INSERT INTO books (
+              title, author, language, file_path, file_size,
+              page_count, pdf_type, ocr_confidence, needs_review,
+              manual_metadata, date_added, last_modified
+            ) VALUES (
+              @title, @author, @language, @file_path, @file_size,
+              @page_count, @pdf_type, @ocr_confidence, @needs_review,
+              @manual_metadata, @date_added, @last_modified
+            )
+          `);
+
+          stmt.run({
+            title: pdfData.metadata?.title || pdfData.metadata?.titleFromFilename || path.basename(pdf.name, '.pdf'),
+            author: pdfData.metadata?.author || pdfData.metadata?.authorFromFilename || null,
+            language: pdfData.language,
+            file_path: pdf.path,
+            file_size: pdf.size,
+            page_count: pdfData.metadata?.pageCount || null,
+            pdf_type: pdfData.pdfType,
+            ocr_confidence: pdfData.ocrData?.confidence || null,
+            needs_review: pdfData.needsReview ? 1 : 0,
+            manual_metadata: JSON.stringify(pdfData.metadata || {}),
+            date_added: pdf.modified.toISOString(),
+            last_modified: pdf.modified.toISOString()
+          });
+
+          added++;
+          console.log(`Processed: ${pdfData.metadata?.title || path.basename(pdf.name)}`);
+        } catch (error) {
+          console.error(`Failed to process ${pdf.path}:`, error);
+          // Fall back to simple insertion
+          insertBook.run(pdf.path, pdf.size, pdf.modified.toISOString());
+          added++;
+        }
       }
     }
 

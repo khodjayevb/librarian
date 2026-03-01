@@ -1,6 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
-const pdfParse = require('pdf-parse');
+const pdf = require('pdf-parse');
 const { createWorker } = require('tesseract.js');
 const { franc } = require('franc');
 const sharp = require('sharp');
@@ -38,7 +38,7 @@ class PDFProcessor {
   async detectPDFType(filePath) {
     try {
       const dataBuffer = await fs.readFile(filePath);
-      const data = await pdfParse(dataBuffer);
+      const data = await pdf(dataBuffer);
 
       const textLength = data.text.trim().length;
       const pageCount = data.numpages;
@@ -55,7 +55,7 @@ class PDFProcessor {
       }
     } catch (error) {
       console.error('Error detecting PDF type:', error);
-      return 'unknown';
+      return 'scanned'; // Default to scanned if we can't read it
     }
   }
 
@@ -65,7 +65,7 @@ class PDFProcessor {
   async extractMetadata(filePath) {
     try {
       const dataBuffer = await fs.readFile(filePath);
-      const data = await pdfParse(dataBuffer);
+      const data = await pdf(dataBuffer);
 
       return {
         title: data.info?.Title || null,
@@ -168,7 +168,7 @@ class PDFProcessor {
       filePath,
       fileName: path.basename(filePath),
       fileSize: 0,
-      pdfType: 'unknown',
+      pdfType: 'scanned', // Default to scanned
       metadata: null,
       language: 'unknown',
       ocrData: null,

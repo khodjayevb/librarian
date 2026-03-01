@@ -23,23 +23,28 @@
 - Full-stack application running (Electron + React + Express)
 - SQLite database with complete schema
 - RESTful API endpoints for all entities
-- Basic UI with Tailwind CSS styling
-- PDF file discovery and scanning
-- Manual book management (CRUD operations)
-- Tag and category systems
+- UI with Tailwind CSS v3 styling (fixed from v4)
+- PDF file discovery and scanning (271 books loaded)
+- Fast/full scan modes for library
+- PDF metadata extraction with pdf-parse
+- Language detection with franc
+- PDF type detection (searchable/scanned/mixed)
+- Batch processing endpoint for existing books
+- Visual indicators for language and PDF type
+- Search and filtering functionality
+- Books folder configured (/Volumes/Storage/Books)
 
 ### 🚧 Next Priority Tasks
-1. Update Books folder path in `server/routes/scan.js`
-2. Implement PDF metadata extraction (pdf-parse)
-3. Add OCR support for scanned PDFs (Tesseract.js)
-4. Implement language detection (franc)
-5. Add file system monitoring (chokidar)
+1. Complete OCR implementation for scanned PDFs
+2. Process remaining unprocessed books (243/271)
+3. Add file system monitoring (chokidar)
+4. Implement book detail view
+5. Add cover thumbnail generation
 
 ### 📝 Known Issues
-- Books folder path needs configuration
-- No PDF metadata extraction yet
-- Search is basic (no full-text indexing)
-- No OCR support for scanned PDFs
+- OCR not fully implemented (placeholder only)
+- Full-text search not implemented
+- No book detail view yet
 
 ---
 
@@ -83,12 +88,12 @@
 - [x] Implement SQLite database connection
 - [x] Design initial database schema
 
-### Phase 2: Core Backend (Week 3-4) ⚙️ PARTIALLY COMPLETE
+### Phase 2: Core Backend (Week 3-4) ✅ MOSTLY COMPLETE
 - [x] Build Express API server
 - [x] Implement file system scanner
-- [ ] Create PDF metadata extractor
-- [ ] Add basic OCR support for scanned PDFs
-- [ ] Implement language detection
+- [x] Create PDF metadata extractor
+- [x] Add basic OCR support for scanned PDFs (placeholder)
+- [x] Implement language detection
 - [ ] Set up file watcher for Books folder
 
 ### Phase 3: Data Layer (Week 5-6) ⚙️ PARTIALLY COMPLETE
@@ -223,9 +228,9 @@ reading_progress (
 
 ### Must Have (MVP)
 - ✅ PDF file discovery and import
-- ⏳ Basic metadata extraction
+- ✅ Basic metadata extraction
 - ✅ Search by title/author
-- ⏳ Language filtering (RU/EN)
+- ✅ Language filtering (RU/EN)
 - ✅ Simple tagging system
 - ✅ Grid and list views
 - ⏳ File system monitoring
@@ -365,7 +370,29 @@ _Add new ideas and notes here as development progresses_
 
 ## Changelog
 
-### 2026-03-01
+### 2026-03-01 - Phase 2 Progress
+- ✅ **Phase 2 Mostly Complete**: PDF processing pipeline
+- Implemented PDF metadata extraction with pdf-parse
+- Added language detection using franc library
+- Created PDF type detection (searchable/scanned/mixed)
+- Built batch processing endpoint for unprocessed books
+- Added file watcher service with chokidar (not activated)
+- Configured Books folder path from environment variable
+- Fixed Tailwind CSS v4 to v3 downgrade for styling
+- Enhanced UI with visual indicators:
+  - Language badges (Russian=blue, English=green)
+  - PDF type indicators (searchable/scanned/mixed)
+  - Unprocessed books counter (243/271 unprocessed)
+  - Process Books button for batch processing
+- Fixed multiple bugs:
+  - pdf-parse import issue
+  - Database constraint violations
+  - Request body handling in Express
+  - React state management with API responses
+- Successfully loaded and displayed 271 books from /Volumes/Storage/Books
+- GitHub repository pushed and updated
+
+### 2026-03-01 - Phase 1
 - ✅ Phase 1 Complete: Foundation established
 - Implemented Electron + React + Express stack
 - Created complete SQLite database schema with all tables
