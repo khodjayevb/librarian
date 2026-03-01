@@ -3,6 +3,8 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs').promises;
 const { db } = require('../database/init');
+const pdfProcessor = require('../services/pdfProcessor');
+const fileWatcher = require('../services/fileWatcher');
 
 // Configuration - UPDATE THIS to your actual Books folder path
 const BOOKS_FOLDER = process.env.BOOKS_FOLDER || '/Volumes/Storage/Books';
@@ -79,16 +81,46 @@ router.post('/', async (req, res) => {
         continue;
       }
 
-      // Extract basic info from filename
-      const fileName = path.basename(pdf.name, '.pdf');
-      const title = fileName.replace(/[-_]/g, ' ');
+      try {
+        // Process PDF to extract metadata
+        const pdfData = await pdfProcessor.processPDF(pdf.path);
 
-      insertBook.run(pdf.path, pdf.size, pdf.modified.toISOString());
-      added++;
+        // Insert with extracted metadata
+        const stmt = db.prepare(`
+          INSERT INTO books (
+            title, author, language, file_path, file_size,
+            page_count, pdf_type, ocr_confidence, needs_review,
+            manual_metadata, date_added, last_modified
+          ) VALUES (
+            @title, @author, @language, @file_path, @file_size,
+            @page_count, @pdf_type, @ocr_confidence, @needs_review,
+            @manual_metadata, @date_added, @last_modified
+          )
+        `);
 
-      // Update with title extracted from filename
-      db.prepare('UPDATE books SET title = ? WHERE file_path = ?')
-        .run(title, pdf.path);
+        stmt.run({
+          title: pdfData.metadata?.title || pdfData.metadata?.titleFromFilename || path.basename(pdf.name, '.pdf'),
+          author: pdfData.metadata?.author || pdfData.metadata?.authorFromFilename || null,
+          language: pdfData.language,
+          file_path: pdf.path,
+          file_size: pdf.size,
+          page_count: pdfData.metadata?.pageCount || null,
+          pdf_type: pdfData.pdfType,
+          ocr_confidence: pdfData.ocrData?.confidence || null,
+          needs_review: pdfData.needsReview ? 1 : 0,
+          manual_metadata: JSON.stringify(pdfData.metadata || {}),
+          date_added: pdf.modified.toISOString(),
+          last_modified: pdf.modified.toISOString()
+        });
+
+        added++;
+        console.log(`Processed: ${pdfData.metadata?.title || path.basename(pdf.name)}`);
+      } catch (error) {
+        console.error(`Failed to process ${pdf.path}:`, error);
+        // Fall back to simple insertion
+        insertBook.run(pdf.path, pdf.size, pdf.modified.toISOString());
+        added++;
+      }
     }
 
     res.json({
@@ -105,11 +137,52 @@ router.post('/', async (req, res) => {
 });
 
 // Get scan status/configuration
-router.get('/config', (req, res) => {
+router.get('/config', async (req, res) => {
+  const exists = await fs.access(BOOKS_FOLDER).then(() => true).catch(() => false);
   res.json({
     booksFolder: BOOKS_FOLDER,
-    exists: fs.access(BOOKS_FOLDER).then(() => true).catch(() => false)
+    exists,
+    watcherStatus: fileWatcher.getStatus()
   });
+});
+
+// Start file watcher
+router.post('/watch/start', (req, res) => {
+  try {
+    fileWatcher.start();
+    res.json({
+      success: true,
+      message: 'File watcher started',
+      status: fileWatcher.getStatus()
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to start watcher',
+      details: error.message
+    });
+  }
+});
+
+// Stop file watcher
+router.post('/watch/stop', async (req, res) => {
+  try {
+    await fileWatcher.stop();
+    res.json({
+      success: true,
+      message: 'File watcher stopped',
+      status: fileWatcher.getStatus()
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to stop watcher',
+      details: error.message
+    });
+  }
+});
+
+// Get watcher status
+router.get('/watch/status', (req, res) => {
+  res.json(fileWatcher.getStatus());
 });
 
 module.exports = router;
