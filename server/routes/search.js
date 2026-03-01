@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const fullTextSearch = require('../services/fullTextSearch');
+const enhancedSearch = require('../services/enhancedSearchService');
 const { db } = require('../database/init');
 
 // Full-text search across all books
@@ -170,6 +171,139 @@ router.get('/suggestions', (req, res) => {
   } catch (error) {
     console.error('Suggestions error:', error);
     res.json([]);
+  }
+});
+
+// Enhanced search with page-level results
+router.get('/enhanced', async (req, res) => {
+  try {
+    const {
+      q: query,
+      bookId,
+      matchType = 'any',
+      includePages = 'true'
+    } = req.query;
+
+    if (!query || query.trim().length < 2) {
+      return res.status(400).json({
+        error: 'Search query must be at least 2 characters'
+      });
+    }
+
+    const results = enhancedSearch.searchWithPages(query, {
+      bookId: bookId ? parseInt(bookId) : null,
+      matchType,
+      groupByBook: includePages === 'true'
+    });
+
+    res.json({
+      query,
+      results,
+      resultCount: results.length
+    });
+  } catch (error) {
+    console.error('Enhanced search error:', error);
+    res.status(500).json({
+      error: 'Enhanced search failed',
+      message: error.message
+    });
+  }
+});
+
+// Get all occurrences in a specific book
+router.get('/books/:id/occurrences', async (req, res) => {
+  try {
+    const bookId = parseInt(req.params.id);
+    const { q: query, limit = 50, matchType = 'phrase' } = req.query;
+
+    if (!query || query.trim().length < 2) {
+      return res.status(400).json({
+        error: 'Search query must be at least 2 characters'
+      });
+    }
+
+    const occurrences = enhancedSearch.getBookOccurrences(bookId, query, {
+      limit: parseInt(limit),
+      matchType
+    });
+
+    // Get book's page offset
+    const bookInfo = db.prepare('SELECT page_offset FROM books WHERE id = ?').get(bookId);
+    const pageOffset = bookInfo?.page_offset || 0;
+
+    res.json({
+      bookId,
+      query,
+      occurrences,
+      totalFound: occurrences.length,
+      pageOffset
+    });
+  } catch (error) {
+    console.error('Occurrences error:', error);
+    res.status(500).json({
+      error: 'Failed to get occurrences',
+      message: error.message
+    });
+  }
+});
+
+// Get search heatmap for a book
+router.get('/books/:id/heatmap', async (req, res) => {
+  try {
+    const bookId = parseInt(req.params.id);
+    const { q: query } = req.query;
+
+    if (!query || query.trim().length < 2) {
+      return res.status(400).json({
+        error: 'Search query must be at least 2 characters'
+      });
+    }
+
+    const heatmap = enhancedSearch.getSearchHeatmap(bookId, query);
+
+    res.json({
+      bookId,
+      query,
+      heatmap,
+      maxDensity: Math.max(...heatmap.map(h => h.density))
+    });
+  } catch (error) {
+    console.error('Heatmap error:', error);
+    res.status(500).json({
+      error: 'Failed to generate heatmap',
+      message: error.message
+    });
+  }
+});
+
+// Index book pages for enhanced search
+router.post('/index/book/:id/pages', async (req, res) => {
+  try {
+    const bookId = parseInt(req.params.id);
+
+    const result = await enhancedSearch.indexBookPages(bookId);
+
+    res.json(result);
+  } catch (error) {
+    console.error('Page indexing error:', error);
+    res.status(500).json({
+      error: 'Page indexing failed',
+      message: error.message
+    });
+  }
+});
+
+// Get page index statistics
+router.get('/index/pages/stats', (req, res) => {
+  try {
+    const stats = enhancedSearch.getIndexStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('Page stats error:', error);
+    res.status(500).json({
+      error: 'Failed to get page stats',
+      message: error.message
+    });
   }
 });
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import debounce from 'lodash.debounce';
+import SearchResultsModal from './SearchResultsModal';
 
 function FullTextSearch({ onSearchResults, isDark }) {
   const [query, setQuery] = useState('');
@@ -10,6 +11,8 @@ function FullTextSearch({ onSearchResults, isDark }) {
   const [showResults, setShowResults] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedBook, setSelectedBook] = useState(null);
+  const [showOccurrencesModal, setShowOccurrencesModal] = useState(false);
 
   // Debounced search function
   const performSearch = useCallback(
@@ -84,6 +87,11 @@ function FullTextSearch({ onSearchResults, isDark }) {
   const handleSuggestionClick = (suggestion) => {
     setQuery(suggestion);
     setShowSuggestions(false);
+  };
+
+  const handleViewOccurrences = (book) => {
+    setSelectedBook(book);
+    setShowOccurrencesModal(true);
   };
 
   const highlightMatch = (text, searchQuery) => {
@@ -249,6 +257,32 @@ function FullTextSearch({ onSearchResults, isDark }) {
                           <span>ISBN: {result.isbn}</span>
                         )}
                       </div>
+
+                      {/* Action Buttons */}
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleViewOccurrences(result);
+                          }}
+                          className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 flex items-center gap-1"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                          View Occurrences
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            window.location.href = `#book-${result.id}`;
+                          }}
+                          className="px-3 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600"
+                        >
+                          Open Book
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -286,6 +320,21 @@ function FullTextSearch({ onSearchResults, isDark }) {
             <li>• Minimum 2 characters required to search</li>
           </ul>
         </div>
+      )}
+
+      {/* Search Results Modal */}
+      {showOccurrencesModal && (
+        <SearchResultsModal
+          isOpen={showOccurrencesModal}
+          onClose={() => {
+            setShowOccurrencesModal(false);
+            setSelectedBook(null);
+          }}
+          book={selectedBook}
+          searchQuery={query}
+          searchType={searchType}
+          isDark={isDark}
+        />
       )}
     </div>
   );

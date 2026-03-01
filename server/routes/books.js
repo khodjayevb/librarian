@@ -398,6 +398,25 @@ router.put('/:id', (req, res) => {
   }
 });
 
+// Update book's page offset
+router.put('/:id/page-offset', (req, res) => {
+  try {
+    const bookId = parseInt(req.params.id);
+    const { pageOffset } = req.body;
+
+    const result = db.prepare('UPDATE books SET page_offset = ? WHERE id = ?').run(pageOffset, bookId);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Book not found' });
+    }
+
+    res.json({ success: true, pageOffset });
+  } catch (error) {
+    console.error('Error updating page offset:', error);
+    res.status(500).json({ error: 'Failed to update page offset' });
+  }
+});
+
 // Delete book
 router.delete('/:id', (req, res) => {
   try {

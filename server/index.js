@@ -45,6 +45,39 @@ app.use(express.urlencoded({ extended: true }));
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, '../public')));
 
+// Serve PDF files - using middleware approach
+app.use('/pdf', (req, res, next) => {
+  // Handle both GET and HEAD requests for PDFs
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return next();
+  }
+
+  // req.path gives us everything after /pdf, but we need the full path
+  // Since the paths in the database start with /, we just use req.path directly
+  const fullPath = decodeURIComponent(req.path);
+
+  // Check if file exists and send it
+  const fs = require('fs');
+  if (fs.existsSync(fullPath)) {
+    // Set appropriate headers for PDF
+    res.setHeader('Content-Type', 'application/pdf');
+
+    if (req.method === 'HEAD') {
+      // For HEAD requests, just send headers without body
+      const stats = fs.statSync(fullPath);
+      res.setHeader('Content-Length', stats.size);
+      res.end();
+    } else {
+      // For GET requests, send the file
+      const absolutePath = path.resolve(fullPath);
+      res.sendFile(absolutePath);
+    }
+  } else {
+    console.log('PDF not found:', fullPath);
+    res.status(404).json({ error: 'File not found', path: fullPath });
+  }
+});
+
 // Request logging
 app.use((req, res, next) => {
   logger.info(`${req.method} ${req.path}`);
