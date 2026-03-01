@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+build/
+out/
+
+# Database
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Testing
+coverage/
+.nyc_output/
+
+# Electron
+electron-builder.yml
+dist_electron/
+
+# Temporary files
+*.tmp
+temp/
+tmp/

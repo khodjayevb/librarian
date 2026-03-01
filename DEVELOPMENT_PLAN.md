@@ -1,0 +1,387 @@
+# Librarian - Development Plan
+
+## Project Overview
+**Name:** Librarian
+**Purpose:** Personal book catalog application for macOS
+**Status:** Phase 1 Complete - Foundation Ready
+**Last Updated:** 2026-03-01
+
+### Core Requirements
+- Catalog PDF books from a Books folder on external storage
+- Support for both searchable and scanned PDFs
+- Russian and English language support
+- Automatic file discovery and monitoring
+- Advanced search and filtering capabilities
+- 100% free and open-source stack
+- Runs completely offline on local machine
+
+---
+
+## Current Status Summary
+
+### ✅ What's Working
+- Full-stack application running (Electron + React + Express)
+- SQLite database with complete schema
+- RESTful API endpoints for all entities
+- Basic UI with Tailwind CSS styling
+- PDF file discovery and scanning
+- Manual book management (CRUD operations)
+- Tag and category systems
+
+### 🚧 Next Priority Tasks
+1. Update Books folder path in `server/routes/scan.js`
+2. Implement PDF metadata extraction (pdf-parse)
+3. Add OCR support for scanned PDFs (Tesseract.js)
+4. Implement language detection (franc)
+5. Add file system monitoring (chokidar)
+
+### 📝 Known Issues
+- Books folder path needs configuration
+- No PDF metadata extraction yet
+- Search is basic (no full-text indexing)
+- No OCR support for scanned PDFs
+
+---
+
+## Technology Stack
+
+### Frontend
+- **Framework:** React 18.x
+- **Desktop Framework:** Electron 28.x
+- **UI Components:** Custom components (no paid libraries)
+- **Styling:** CSS Modules / Tailwind CSS (free)
+- **State Management:** Zustand or Context API
+
+### Backend
+- **Runtime:** Node.js 20.x LTS
+- **API Framework:** Express.js
+- **Database:** SQLite3 (embedded)
+- **ORM:** Better-sqlite3 or Prisma
+
+### PDF Processing
+- **Text Extraction:** pdf-parse
+- **OCR Engine:** Tesseract.js 5.x
+- **PDF Rendering:** pdfjs-dist
+- **Image Processing:** Sharp
+
+### Utilities
+- **File Watching:** Chokidar
+- **Language Detection:** Franc
+- **Search Engine:** MiniSearch
+- **Logging:** Winston
+- **Testing:** Jest + React Testing Library
+
+---
+
+## Development Phases
+
+### Phase 1: Foundation (Week 1-2) ✅ COMPLETE
+- [x] Define technology stack
+- [x] Initialize Electron + React project
+- [x] Set up development environment
+- [x] Create basic project structure
+- [x] Implement SQLite database connection
+- [x] Design initial database schema
+
+### Phase 2: Core Backend (Week 3-4) ⚙️ PARTIALLY COMPLETE
+- [x] Build Express API server
+- [x] Implement file system scanner
+- [ ] Create PDF metadata extractor
+- [ ] Add basic OCR support for scanned PDFs
+- [ ] Implement language detection
+- [ ] Set up file watcher for Books folder
+
+### Phase 3: Data Layer (Week 5-6) ⚙️ PARTIALLY COMPLETE
+- [x] Complete database schema implementation
+- [x] Create CRUD operations for books
+- [x] Implement tagging system
+- [x] Add categorization features
+- [ ] Build search indexing
+- [x] Implement filtering logic
+
+### Phase 4: User Interface (Week 7-8) ⚙️ PARTIALLY COMPLETE
+- [x] Design UI mockups (basic)
+- [x] Create main application layout
+- [x] Build book grid/list views
+- [x] Implement search interface
+- [ ] Add filter controls
+- [ ] Create book detail view
+- [ ] Add edit metadata forms
+
+### Phase 5: Advanced Features (Week 9-10)
+- [ ] Enhance OCR with preprocessing
+- [ ] Add batch import functionality
+- [ ] Implement cover thumbnail generation
+- [ ] Create statistics dashboard
+- [ ] Add export functionality
+- [ ] Implement backup/restore
+
+### Phase 6: Polish & Packaging (Week 11-12)
+- [ ] Performance optimization
+- [ ] Error handling improvements
+- [ ] Add user preferences
+- [ ] Create app icon and branding
+- [ ] Package for macOS distribution
+- [ ] Write user documentation
+
+---
+
+## Database Schema
+
+```sql
+-- Core tables
+books (
+  id INTEGER PRIMARY KEY,
+  title TEXT,
+  author TEXT,
+  language TEXT,
+  file_path TEXT UNIQUE NOT NULL,
+  file_size INTEGER,
+  page_count INTEGER,
+  pdf_type TEXT, -- 'searchable', 'scanned', 'mixed'
+  ocr_confidence REAL,
+  needs_review BOOLEAN DEFAULT 0,
+  manual_metadata TEXT, -- JSON
+  date_added DATETIME,
+  last_modified DATETIME,
+  last_opened DATETIME
+)
+
+tags (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  color TEXT
+)
+
+categories (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  parent_id INTEGER REFERENCES categories(id)
+)
+
+-- Relationship tables
+book_tags (
+  book_id INTEGER REFERENCES books(id),
+  tag_id INTEGER REFERENCES tags(id),
+  PRIMARY KEY (book_id, tag_id)
+)
+
+book_categories (
+  book_id INTEGER REFERENCES books(id),
+  category_id INTEGER REFERENCES categories(id),
+  PRIMARY KEY (book_id, category_id)
+)
+
+-- Additional metadata
+book_notes (
+  id INTEGER PRIMARY KEY,
+  book_id INTEGER REFERENCES books(id),
+  note TEXT,
+  created_at DATETIME
+)
+
+reading_progress (
+  book_id INTEGER PRIMARY KEY REFERENCES books(id),
+  current_page INTEGER,
+  total_pages INTEGER,
+  last_read DATETIME
+)
+```
+
+---
+
+## API Endpoints
+
+### Books
+- `GET /api/books` - List all books with pagination
+- `GET /api/books/:id` - Get book details
+- `POST /api/books` - Add new book manually
+- `PUT /api/books/:id` - Update book metadata
+- `DELETE /api/books/:id` - Remove book from catalog
+
+### Search & Filter
+- `GET /api/search?q=` - Full-text search
+- `POST /api/books/filter` - Advanced filtering
+- `GET /api/books/recent` - Recently added/opened
+
+### Tags & Categories
+- `GET /api/tags` - List all tags
+- `POST /api/tags` - Create new tag
+- `GET /api/categories` - List categories
+- `POST /api/categories` - Create category
+
+### System
+- `POST /api/scan` - Trigger manual scan
+- `GET /api/stats` - Library statistics
+- `POST /api/ocr/:id` - Re-run OCR on book
+- `GET /api/config` - Get app configuration
+
+---
+
+## Features Backlog
+
+### Must Have (MVP)
+- ✅ PDF file discovery and import
+- ⏳ Basic metadata extraction
+- ✅ Search by title/author
+- ⏳ Language filtering (RU/EN)
+- ✅ Simple tagging system
+- ✅ Grid and list views
+- ⏳ File system monitoring
+
+### Should Have
+- ⏳ OCR for scanned PDFs
+- ⏳ Cover thumbnails
+- ⏳ Advanced filters
+- ⏳ Bulk operations
+- ⏳ Reading progress tracking
+- ⏳ Quick preview
+
+### Nice to Have
+- 📋 Full-text search inside PDFs
+- 📋 Auto-tagging suggestions
+- 📋 Duplicate detection
+- 📋 Series management
+- 📋 Reading lists/collections
+- 📋 Export to BibTeX/CSV
+- 📋 Dark/light theme toggle
+- 📋 Keyboard shortcuts
+- 📋 Statistics dashboard
+
+### Future Ideas
+- 💡 EPUB support
+- 💡 Cloud sync (optional)
+- 💡 Mobile companion app
+- 💡 AI-powered summaries
+- 💡 Reading recommendations
+- 💡 Social features (sharing lists)
+
+---
+
+## Technical Decisions
+
+### Why Electron?
+- Native macOS app experience
+- Access to file system
+- Offline functionality
+- No deployment costs
+
+### Why SQLite?
+- Zero configuration
+- Single file database
+- Fast for local queries
+- Perfect for single-user apps
+
+### Why Tesseract.js?
+- Completely free
+- Runs offline
+- Supports Russian & English
+- No API limits
+
+---
+
+## Development Guidelines
+
+### Code Structure
+```
+librarian/
+├── electron/
+│   ├── main.js
+│   ├── preload.js
+│   └── menu.js
+├── src/
+│   ├── components/
+│   ├── pages/
+│   ├── hooks/
+│   ├── utils/
+│   └── api/
+├── server/
+│   ├── routes/
+│   ├── controllers/
+│   ├── services/
+│   ├── models/
+│   └── database/
+├── scripts/
+│   ├── build.js
+│   └── package.js
+└── tests/
+```
+
+### Naming Conventions
+- Components: PascalCase
+- Files: camelCase
+- Database: snake_case
+- API endpoints: kebab-case
+
+### Git Workflow
+- Main branch: stable releases
+- Develop branch: active development
+- Feature branches: feature/description
+- Commit format: "type: description"
+
+---
+
+## Known Challenges
+
+1. **OCR Performance**
+   - Solution: Background processing queue
+   - Consider: Optional cloud OCR for better results
+
+2. **Large Library Performance**
+   - Solution: Pagination, virtual scrolling
+   - Consider: Search result caching
+
+3. **PDF Variety**
+   - Solution: Fallback strategies, manual override
+   - Consider: User feedback for improvements
+
+4. **Storage Management**
+   - Solution: Store only metadata, reference files
+   - Consider: Thumbnail caching strategy
+
+---
+
+## Success Metrics
+
+- [ ] Can import 1000+ books without crashing
+- [ ] Search results return in < 500ms
+- [ ] OCR accuracy > 80% for good scans
+- [ ] App starts in < 3 seconds
+- [ ] Memory usage < 500MB for normal use
+
+---
+
+## Notes & Ideas
+
+_Add new ideas and notes here as development progresses_
+
+- Consider adding a "quick add" floating button
+- Maybe implement smart folders based on rules
+- Could add ISBN lookup for better metadata
+- Think about adding annotation support later
+
+---
+
+## Changelog
+
+### 2026-03-01
+- ✅ Phase 1 Complete: Foundation established
+- Implemented Electron + React + Express stack
+- Created complete SQLite database schema with all tables
+- Built full CRUD REST API for books, tags, and categories
+- Set up Tailwind CSS with PostCSS (fixed v4 compatibility)
+- Created basic UI with search and grid view
+- Implemented file system scanner for PDF discovery
+- Added development scripts and testing utilities
+- Fixed React state management for API responses
+- Project is now runnable with `npm start`
+
+### 2026-02-28
+- Initial development plan created
+- Defined technology stack
+- Outlined 6-phase development approach
+
+---
+
+*This is a living document. Update regularly as the project evolves.*
