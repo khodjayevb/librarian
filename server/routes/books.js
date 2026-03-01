@@ -1,40 +1,100 @@
 const express = require('express');
 const router = express.Router();
 const { db } = require('../database/init');
-const thumbnailGenerator = require('../services/thumbnailGeneratorPdfjs');
+const thumbnailGenerator = require('../services/thumbnailGeneratorPdf2pic');
+const fs = require('fs');
+const path = require('path');
 
-// Get all books with pagination
+// Get all books with pagination and filtering
 router.get('/', (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
-    const search = req.query.search || '';
-    const language = req.query.language || '';
 
-    let query = 'SELECT * FROM books WHERE 1=1';
+    // Filter parameters
+    const search = req.query.search || '';
+    const tags = req.query.tags ? req.query.tags.split(',') : [];
+    const author = req.query.author || '';
+    const fileType = req.query.fileType || '';
+    const language = req.query.language || '';
+    const sortBy = req.query.sortBy || 'date_added';
+    const sortOrder = req.query.sortOrder?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+
+    let query = 'SELECT DISTINCT b.* FROM books b WHERE 1=1';
     const params = [];
 
+    // Search filter
     if (search) {
-      query += ' AND (title LIKE ? OR author LIKE ?)';
+      query += ' AND (b.title LIKE ? OR b.author LIKE ?)';
       params.push(`%${search}%`, `%${search}%`);
     }
 
+    // Author filter
+    if (author) {
+      query += ' AND b.author = ?';
+      params.push(author);
+    }
+
+    // File type filter
+    if (fileType) {
+      query += ' AND LOWER(SUBSTR(b.file_path, -LENGTH(?))) = LOWER(?)';
+      params.push(`.${fileType}`, `.${fileType}`);
+    }
+
+    // Language filter
     if (language) {
-      query += ' AND language = ?';
+      query += ' AND b.language = ?';
       params.push(language);
     }
 
-    query += ' ORDER BY date_added DESC LIMIT ? OFFSET ?';
+    // Tags filter (if we have tags in the query)
+    if (tags.length > 0) {
+      query = `SELECT DISTINCT b.* FROM books b
+               INNER JOIN book_tags bt ON b.id = bt.book_id
+               INNER JOIN tags t ON bt.tag_id = t.id
+               WHERE 1=1`;
+
+      if (search) {
+        query += ' AND (b.title LIKE ? OR b.author LIKE ?)';
+      }
+      if (author) {
+        query += ' AND b.author = ?';
+      }
+      if (fileType) {
+        query += ' AND LOWER(SUBSTR(b.file_path, -LENGTH(?))) = LOWER(?)';
+      }
+      if (language) {
+        query += ' AND b.language = ?';
+      }
+
+      query += ' AND t.name IN (' + tags.map(() => '?').join(',') + ')';
+      query += ' GROUP BY b.id HAVING COUNT(DISTINCT t.name) = ?';
+      params.push(...tags, tags.length);
+    }
+
+    // Sorting
+    const validSortColumns = ['title', 'author', 'date_added', 'file_size'];
+    const sortColumn = validSortColumns.includes(sortBy) ? sortBy : 'date_added';
+    query += ` ORDER BY b.${sortColumn} ${sortOrder} LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
     const books = db.prepare(query).all(...params);
 
-    // Add thumbnail URLs to each book
+    // Add thumbnail URLs and tags to each book
     books.forEach(book => {
       if (book.thumbnail_path) {
         book.thumbnail_url = `http://localhost:3001${book.thumbnail_path}`;
       }
+
+      // Get tags for this book
+      const bookTags = db.prepare(`
+        SELECT t.name FROM tags t
+        INNER JOIN book_tags bt ON t.id = bt.tag_id
+        WHERE bt.book_id = ?
+      `).all(book.id);
+
+      book.tags = bookTags.map(t => t.name);
     });
 
     // Get total count for pagination
@@ -293,7 +353,20 @@ router.post('/:id/thumbnail', async (req, res) => {
 // Generate thumbnails for all books
 router.post('/thumbnails/batch', async (req, res) => {
   try {
-    const books = db.prepare('SELECT id, file_path FROM books WHERE thumbnail_path IS NULL LIMIT 50').all();
+    // Get books that don't have thumbnails yet
+    // First check which books don't have actual thumbnail files
+    const allBooks = db.prepare('SELECT id, file_path FROM books').all();
+    const booksWithoutThumbnails = [];
+
+    for (const book of allBooks) {
+      const thumbnailPath = path.join(__dirname, '../../public/thumbnails', `book_${book.id}.jpg`);
+      if (!fs.existsSync(thumbnailPath)) {
+        booksWithoutThumbnails.push(book);
+      }
+    }
+
+    // Process up to 50 books that don't have thumbnails
+    const books = booksWithoutThumbnails.slice(0, 50);
 
     res.json({
       message: 'Thumbnail generation started',

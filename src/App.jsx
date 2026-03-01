@@ -8,6 +8,13 @@ function App() {
   const [selectedBook, setSelectedBook] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  // Advanced filtering states
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [selectedAuthor, setSelectedAuthor] = useState('');
+  const [selectedFileType, setSelectedFileType] = useState('');
+  const [sortBy, setSortBy] = useState('title'); // title, date_added, file_size
+  const [sortOrder, setSortOrder] = useState('asc'); // asc, desc
+
   // Calculate stats
   const unprocessedCount = books.filter(book =>
     !book.language || book.language === 'Not scanned'
@@ -27,12 +34,66 @@ function App() {
     }
   };
 
-  // Filter books based on search query
-  const filteredBooks = books.filter(book => {
-    const query = searchQuery.toLowerCase();
-    return (book.title || '').toLowerCase().includes(query) ||
-           (book.author || '').toLowerCase().includes(query);
-  });
+  // Extract unique values for filters
+  const allTags = [...new Set(books.flatMap(book => book.tags || []))];
+  const allAuthors = [...new Set(books.map(book => book.author).filter(Boolean))].sort();
+  const allFileTypes = [...new Set(books.map(book => {
+    const ext = book.file_path?.split('.').pop()?.toLowerCase();
+    return ext;
+  }).filter(Boolean))].sort();
+
+  // Enhanced filtering and sorting
+  const filteredAndSortedBooks = React.useMemo(() => {
+    // Apply filters
+    let filtered = books.filter(book => {
+      // Search query filter
+      const query = searchQuery.toLowerCase();
+      const matchesSearch = !query ||
+        (book.title || '').toLowerCase().includes(query) ||
+        (book.author || '').toLowerCase().includes(query);
+
+      // Tag filter
+      const matchesTags = selectedTags.length === 0 ||
+        selectedTags.every(tag => book.tags?.includes(tag));
+
+      // Author filter
+      const matchesAuthor = !selectedAuthor ||
+        book.author === selectedAuthor;
+
+      // File type filter
+      const bookFileType = book.file_path?.split('.').pop()?.toLowerCase();
+      const matchesFileType = !selectedFileType ||
+        bookFileType === selectedFileType;
+
+      return matchesSearch && matchesTags && matchesAuthor && matchesFileType;
+    });
+
+    // Apply sorting
+    filtered.sort((a, b) => {
+      let compareValue = 0;
+
+      switch (sortBy) {
+        case 'title':
+          compareValue = (a.title || '').localeCompare(b.title || '');
+          break;
+        case 'date_added':
+          compareValue = new Date(a.date_added || 0) - new Date(b.date_added || 0);
+          break;
+        case 'file_size':
+          compareValue = (a.file_size || 0) - (b.file_size || 0);
+          break;
+        case 'author':
+          compareValue = (a.author || '').localeCompare(b.author || '');
+          break;
+        default:
+          compareValue = 0;
+      }
+
+      return sortOrder === 'asc' ? compareValue : -compareValue;
+    });
+
+    return filtered;
+  }, [books, searchQuery, selectedTags, selectedAuthor, selectedFileType, sortBy, sortOrder]);
 
   useEffect(() => {
     // Set up listeners for Electron menu events if available
@@ -140,7 +201,7 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
+      <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
         <div className="px-6 py-4">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-semibold text-gray-800">
@@ -148,7 +209,7 @@ function App() {
             </h1>
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-600">
-                {loading ? 'Loading...' : searchQuery ? `${filteredBooks.length} of ${books.length}` : `${books.length} books`}
+                {loading ? 'Loading...' : (searchQuery || selectedTags.length > 0 || selectedAuthor || selectedFileType) ? `${filteredAndSortedBooks.length} of ${books.length}` : `${books.length} books`}
                 {unprocessedCount > 0 && !loading && (
                   <span className="ml-2 text-orange-600">
                     ({unprocessedCount} unprocessed)
@@ -195,6 +256,97 @@ function App() {
         </div>
       </header>
 
+      {/* Filter Bar - Also sticky below the header */}
+      <div className="sticky top-16 z-40 bg-gray-100 border-b border-gray-200 px-6 py-3 shadow-sm">
+        <div className="flex items-center space-x-4">
+          {/* Tag Filter */}
+          {allTags.length > 0 && (
+            <div className="flex items-center space-x-2">
+              <label className="text-sm font-medium text-gray-700">Tags:</label>
+              <select
+                multiple
+                className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={selectedTags}
+                onChange={(e) => setSelectedTags(Array.from(e.target.selectedOptions, option => option.value))}
+                style={{minWidth: '120px', maxWidth: '200px'}}
+              >
+                {allTags.map(tag => (
+                  <option key={tag} value={tag}>{tag}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Author Filter */}
+          {allAuthors.length > 0 && (
+            <div className="flex items-center space-x-2">
+              <label className="text-sm font-medium text-gray-700">Author:</label>
+              <select
+                className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={selectedAuthor}
+                onChange={(e) => setSelectedAuthor(e.target.value)}
+              >
+                <option value="">All Authors</option>
+                {allAuthors.map(author => (
+                  <option key={author} value={author}>{author}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* File Type Filter */}
+          <div className="flex items-center space-x-2">
+            <label className="text-sm font-medium text-gray-700">Type:</label>
+            <select
+              className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={selectedFileType}
+              onChange={(e) => setSelectedFileType(e.target.value)}
+            >
+              <option value="">All Types</option>
+              {allFileTypes.map(type => (
+                <option key={type} value={type}>{type.toUpperCase()}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Sort Options */}
+          <div className="flex items-center space-x-2">
+            <label className="text-sm font-medium text-gray-700">Sort by:</label>
+            <select
+              className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <option value="title">Title</option>
+              <option value="author">Author</option>
+              <option value="date_added">Date Added</option>
+              <option value="file_size">File Size</option>
+            </select>
+            <button
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
+              title={`Sort ${sortOrder === 'asc' ? 'Descending' : 'Ascending'}`}
+            >
+              {sortOrder === 'asc' ? '↑' : '↓'}
+            </button>
+          </div>
+
+          {/* Clear Filters */}
+          {(selectedTags.length > 0 || selectedAuthor || selectedFileType) && (
+            <button
+              onClick={() => {
+                setSelectedTags([]);
+                setSelectedAuthor('');
+                setSelectedFileType('');
+              }}
+              className="px-3 py-1 bg-red-500 text-white rounded-md text-sm hover:bg-red-600"
+            >
+              Clear Filters
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
         {loading ? (
@@ -207,15 +359,15 @@ function App() {
               No books found. Click "Scan Library" to discover books.
             </div>
           </div>
-        ) : filteredBooks.length === 0 ? (
+        ) : filteredAndSortedBooks.length === 0 ? (
           <div className="text-center py-16">
             <div className="text-gray-500 text-lg">
-              No books match your search.
+              No books match your filters.
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {filteredBooks.map((book) => (
+            {filteredAndSortedBooks.map((book) => (
               <div
                 key={book.id}
                 className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-200 cursor-pointer group relative overflow-hidden"

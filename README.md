@@ -1,24 +1,47 @@
 # Librarian - Personal Book Catalog
 
-A desktop application for cataloging and managing your personal PDF book collection on macOS.
+A powerful desktop application for cataloging and managing your personal PDF book collection on macOS.
 
 ## Features
 
+### Core Features
 - 📚 **PDF Discovery & Import** - Automatically scan and import PDFs from your Books folder
 - 🔍 **Smart Search** - Search by title, author, or content
 - 🏷️ **Tagging System** - Organize books with custom tags and categories
-- 🌍 **Multi-language Support** - Built for Russian and English books
+- 🌍 **Multi-language Support** - Built for Russian and English books with automatic language detection
 - 🖥️ **Native Desktop App** - Electron-based macOS application
 - 🔒 **100% Offline** - All data stays on your machine
 - 🆓 **Completely Free** - Open source, no subscriptions or API costs
+
+### Advanced Features (NEW!)
+- 🖼️ **PDF Thumbnails** - Automatic generation of book cover thumbnails from PDF first pages
+- 📖 **Quick Open** - Double-click any book to open it directly in your default PDF reader
+- 🔍 **Advanced Filtering** - Filter by:
+  - Multiple tags (AND logic)
+  - Authors
+  - File types (PDF, EPUB, etc.)
+  - Combined with search
+- 📊 **Sorting Options** - Sort your library by:
+  - Title (A-Z or Z-A)
+  - Author name
+  - Date added
+  - File size
+- 📝 **Book Metadata Editor** - Edit title, author, and manage tags directly in the app
+- 🎯 **Sticky Navigation** - Header and filter bars stay visible while scrolling
+- 🚀 **Batch Processing** - Process metadata for multiple books at once
+- 📸 **Batch Thumbnail Generation** - Generate covers for all books with one click
 
 ## Tech Stack
 
 - **Frontend**: React 18 + Tailwind CSS
 - **Desktop**: Electron 28
 - **Backend**: Express.js + Node.js
-- **Database**: SQLite
-- **PDF Processing**: pdf-parse, Tesseract.js (OCR)
+- **Database**: SQLite with better-sqlite3
+- **PDF Processing**:
+  - pdf-parse (metadata extraction)
+  - Tesseract.js (OCR for scanned PDFs)
+  - pdf2pic + GraphicsMagick (thumbnail generation)
+- **Build System**: GitHub Actions CI/CD
 
 ## Getting Started
 
@@ -27,6 +50,14 @@ A desktop application for cataloging and managing your personal PDF book collect
 - Node.js 20+ LTS
 - npm or yarn
 - macOS (primary target platform)
+- GraphicsMagick (for thumbnail generation)
+  ```bash
+  brew install graphicsmagick
+  ```
+- Ghostscript (for PDF processing)
+  ```bash
+  brew install ghostscript
+  ```
 
 ### Installation
 
@@ -87,17 +118,49 @@ Bibliotheka/
 
 ## Current Status
 
-✅ **Phase 1 Complete**: Foundation established
-- Full-stack application running
-- Database schema implemented
-- Basic UI with search functionality
-- PDF file discovery
+### Completed Phases
 
-🚧 **Next Steps**:
-- PDF metadata extraction
-- OCR for scanned PDFs
-- Language detection
-- File system monitoring
+✅ **Phase 1**: Foundation
+- Full-stack application running
+- Database schema with books, tags, and relationships
+- Basic UI with search functionality
+- PDF file discovery from Books folder
+
+✅ **Phase 2**: Book Management
+- PDF metadata extraction (title, author, page count)
+- Language detection (Russian/English)
+- Book detail modal with metadata editing
+- Tag management system
+- Batch processing for metadata extraction
+
+✅ **Phase 3**: CI/CD
+- GitHub Actions workflow
+- Multi-platform builds (macOS, Windows, Linux)
+- Automated releases with artifacts
+
+✅ **Phase 4**: Visual Enhancements
+- PDF thumbnail generation from first page
+- Double-click to open PDFs
+- Visual book cards with covers
+- Batch thumbnail generation
+
+✅ **Phase 5**: Advanced Search & Filtering
+- Multi-criteria filtering (tags, authors, file types)
+- Advanced sorting options (title, author, date, size)
+- Combined search and filter functionality
+- Sticky navigation and filter bars
+- Real-time filtering updates
+
+### Next Steps
+
+🚧 **Upcoming Features**:
+- Author extraction from PDF metadata
+- Multi-select for batch operations
+- Collections/shelves system
+- Reading progress tracking
+- Full-text search within PDFs
+- Export/import functionality
+- Dark mode
 
 ## License
 
