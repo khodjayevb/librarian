@@ -98,6 +98,35 @@ const createTables = () => {
     )
   `);
 
+  // Collections/Shelves table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS collections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      description TEXT,
+      icon TEXT,
+      color TEXT,
+      is_smart INTEGER DEFAULT 0,
+      smart_rules TEXT, -- JSON for smart collection rules
+      position INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Book-Collections relationship
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS book_collections (
+      book_id INTEGER NOT NULL,
+      collection_id INTEGER NOT NULL,
+      position INTEGER DEFAULT 0,
+      added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (book_id, collection_id),
+      FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+      FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
+    )
+  `);
+
   // Create indexes for better performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_books_title ON books(title);
@@ -106,6 +135,10 @@ const createTables = () => {
     CREATE INDEX IF NOT EXISTS idx_books_date_added ON books(date_added);
     CREATE INDEX IF NOT EXISTS idx_book_tags_book_id ON book_tags(book_id);
     CREATE INDEX IF NOT EXISTS idx_book_tags_tag_id ON book_tags(tag_id);
+    CREATE INDEX IF NOT EXISTS idx_collections_name ON collections(name);
+    CREATE INDEX IF NOT EXISTS idx_collections_position ON collections(position);
+    CREATE INDEX IF NOT EXISTS idx_book_collections_book_id ON book_collections(book_id);
+    CREATE INDEX IF NOT EXISTS idx_book_collections_collection_id ON book_collections(collection_id);
   `);
 
   console.log('✅ Database tables created successfully');

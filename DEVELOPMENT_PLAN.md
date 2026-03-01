@@ -4,7 +4,7 @@
 
 **Name:** Librarian
 **Purpose:** Personal book catalog application for macOS
-**Status:** Phase 5 Complete - Advanced Search & Filtering Ready
+**Status:** Phase 6 Complete - Multi-Select & Collections Ready
 **Last Updated:** 2026-03-01
 
 ### Core Requirements
@@ -44,6 +44,10 @@
 - **Book detail modal with metadata editing**
 - **Tag management system**
 - **GitHub Actions CI/CD pipeline**
+- **Multi-select for batch operations (bulk tagging, deletion)**
+- **Collections/shelves system with sidebar navigation**
+- **Add/remove books from collections**
+- **Dark mode theme with toggle and persistence**
 
 ### 🚧 Next Priority Tasks
 
@@ -51,15 +55,14 @@
    - Extract author info from PDF document properties
    - Improve author parsing from filenames
    - Handle multiple authors
-2. **Multi-Select for Batch Operations**
-   - Checkbox selection on book cards
-   - Bulk tag assignment
-   - Bulk deletion
-   - Bulk metadata updates
-3. **Collections/Shelves System**
-   - Create custom book collections
-   - Smart collections based on rules
-   - Drag and drop organization
+2. **Smart Collections**
+   - Create collections based on rules
+   - Auto-update when new books match criteria
+   - Custom rule builder UI
+3. **Reading Progress Tracking**
+   - Track current page per book
+   - Calculate reading percentage
+   - Reading statistics
 
 ### 📝 Known Issues
 
@@ -168,17 +171,40 @@
   - [x] Clear filters button
   - [x] Real-time filter updates
 
-### Phase 6: Polish & Advanced Features ⚙️ IN PROGRESS
+### Phase 6: Polish & Advanced Features ✅ COMPLETE
 
+- [x] **Multi-select for batch operations**
+  - [x] Checkbox selection on book cards
+  - [x] Bulk tag assignment
+  - [x] Bulk deletion
+  - [x] Select all visible books
+  - [x] Clear selection
+  - [x] Fixed routing bug (bulk routes before `:id` routes)
+- [x] **Collections/shelves system**
+  - [x] Database schema for collections and book_collections
+  - [x] Full CRUD API for collections management
+  - [x] Collections sidebar with book counts
+  - [x] Add/remove books from collections
+  - [x] Default collections initialization
+  - [x] Position tracking for custom ordering
+  - [x] Visual collection indicators
+
+### Phase 7: Advanced Features ⚙️ IN PROGRESS
+
+- [x] **Dark mode theme** (COMPLETE)
+  - [x] Toggle button with sun/moon icons
+  - [x] Theme persistence in localStorage
+  - [x] System preference detection
+  - [x] Smooth transitions
+  - [x] All components styled for dark mode
 - [ ] Author extraction from PDF metadata
-- [ ] Multi-select for batch operations
-- [ ] Collections/shelves system
 - [ ] Reading progress tracking
 - [ ] Full-text search within PDFs
-- [ ] Dark mode theme
 - [ ] Export/import functionality
 - [ ] Performance optimization
 - [ ] User preferences
+- [ ] Drag and drop for collections
+- [ ] Smart collections with rules
 - [ ] Package for macOS distribution
 
 ---
@@ -245,6 +271,28 @@ reading_progress (
   total_pages INTEGER,
   last_read DATETIME
 )
+
+-- Collections/Shelves
+collections (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  icon TEXT,
+  color TEXT,
+  is_smart INTEGER DEFAULT 0,
+  smart_rules TEXT, -- JSON for smart collection rules
+  position INTEGER DEFAULT 0,
+  created_at DATETIME,
+  updated_at DATETIME
+)
+
+book_collections (
+  book_id INTEGER REFERENCES books(id),
+  collection_id INTEGER REFERENCES collections(id),
+  position INTEGER DEFAULT 0,
+  added_at DATETIME,
+  PRIMARY KEY (book_id, collection_id)
+)
 ```
 
 ---
@@ -262,6 +310,12 @@ reading_progress (
 - `POST /api/books/:id/thumbnail` - Generate thumbnail for single book
 - `POST /api/books/thumbnails/batch` - Batch generate thumbnails
 
+### Bulk Operations
+
+- `POST /api/books/bulk/tags` - Add tags to multiple books
+- `DELETE /api/books/bulk/delete` - Delete multiple books
+- `POST /api/books/bulk/update` - Update metadata for multiple books
+
 ### Search & Filter
 
 - `GET /api/books?search=&tags=&author=&fileType=&sortBy=&sortOrder=` - Advanced filtering
@@ -276,6 +330,19 @@ reading_progress (
 - `DELETE /api/books/:id/tags/:tagId` - Remove tag from book
 - `GET /api/categories` - List categories
 - `POST /api/categories` - Create category
+
+### Collections
+
+- `GET /api/collections` - List all collections with book counts
+- `GET /api/collections/:id` - Get collection with its books
+- `POST /api/collections` - Create new collection
+- `PUT /api/collections/:id` - Update collection
+- `DELETE /api/collections/:id` - Delete collection
+- `POST /api/collections/:id/books` - Add books to collection
+- `DELETE /api/collections/:id/books/:bookId` - Remove book from collection
+- `PUT /api/collections/reorder` - Update collection order
+- `PUT /api/collections/:id/books/reorder` - Update book order in collection
+- `POST /api/collections/init-defaults` - Initialize default collections
 
 ### System
 
@@ -304,10 +371,10 @@ reading_progress (
 
 ### Should Have ⚙️
 
+- ✅ Multi-select for batch operations (COMPLETE)
+- ✅ Collections/shelves system (COMPLETE)
 - ⏳ Enhanced OCR for scanned PDFs
 - ⏳ Author extraction from PDF metadata
-- ⏳ Multi-select for batch operations
-- ⏳ Collections/shelves system
 - ⏳ Reading progress tracking
 - ⏳ Quick preview panel
 
@@ -442,6 +509,55 @@ Bibliotheka/
 ---
 
 ## Changelog
+
+### 2026-03-01 - Dark Mode Theme Implementation
+
+- ✅ **Dark Mode Complete**: Full dark theme support across the application
+- Implemented dark mode toggle:
+  - Sun/moon icon toggle button in header
+  - Smooth transitions between themes
+  - Theme preference saved to localStorage
+  - Automatic detection of system dark mode preference
+- Updated all components with dark mode styles:
+  - Main app container and backgrounds
+  - Header and navigation bars
+  - Filter controls and inputs
+  - Book cards and hover states
+  - Collections sidebar
+  - All buttons and form elements
+- Technical implementation:
+  - Custom useDarkMode React hook
+  - Tailwind CSS dark mode configuration
+  - Dynamic class application to document root
+  - Consistent color scheme throughout
+
+### 2026-03-01 - Phase 6 Complete - Multi-Select & Collections
+
+- ✅ **Phase 6 Complete**: Multi-select and collections system
+- Implemented multi-select functionality:
+  - Checkbox selection on book cards
+  - Bulk tag assignment for multiple books
+  - Bulk deletion with confirmation
+  - Select all/clear selection controls
+  - Visual selection counter
+  - Fixed critical routing bug (bulk routes must precede `:id` routes)
+- Created comprehensive collections/shelves system:
+  - Database schema with collections and book_collections tables
+  - Full CRUD API endpoints for collections management
+  - Collections sidebar component with book counts
+  - Add/remove books from collections
+  - Default collections initialization (Currently Reading, Want to Read, etc.)
+  - Position tracking for custom ordering
+  - Remove individual books from collections with hover button
+- UI/UX enhancements:
+  - Integrated collections sidebar into main layout
+  - Visual indicators for selected collection
+  - Bulk actions modal for batch operations
+  - Hover states for collection management
+- Backend improvements:
+  - Transaction-based bulk operations
+  - Proper JOIN queries for collection books
+  - Fixed Express route ordering issues
 
 ### 2026-03-01 - Phase 5 Complete - Advanced Search & Filtering
 

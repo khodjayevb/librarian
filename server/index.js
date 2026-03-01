@@ -10,6 +10,7 @@ const scanRouter = require('./routes/scan');
 const tagsRouter = require('./routes/tags');
 const categoriesRouter = require('./routes/categories');
 const processRouter = require('./routes/process');
+const collectionsRouter = require('./routes/collections');
 
 // Initialize database
 const db = require('./database/init');
@@ -54,6 +55,7 @@ app.use('/api/scan', scanRouter);
 app.use('/api/tags', tagsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/process', processRouter);
+app.use('/api/collections', collectionsRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

@@ -5,6 +5,166 @@ const thumbnailGenerator = require('../services/thumbnailGeneratorPdf2pic');
 const fs = require('fs');
 const path = require('path');
 
+// IMPORTANT: Bulk routes must come BEFORE /:id routes to avoid route matching issues
+
+// Bulk operations
+
+// Bulk add tags to multiple books
+router.post('/bulk/tags', (req, res) => {
+  try {
+    const { bookIds, tags } = req.body;
+
+    if (!bookIds || !Array.isArray(bookIds) || bookIds.length === 0) {
+      return res.status(400).json({ error: 'Book IDs are required' });
+    }
+
+    if (!tags || !Array.isArray(tags) || tags.length === 0) {
+      return res.status(400).json({ error: 'Tags are required' });
+    }
+
+    // Start a transaction for better performance
+    const transaction = db.transaction(() => {
+      for (const tagName of tags) {
+        // First ensure tag exists
+        let tagRecord = db.prepare('SELECT * FROM tags WHERE name = ?').get(tagName);
+
+        if (!tagRecord) {
+          const result = db.prepare('INSERT INTO tags (name) VALUES (?)').run(tagName);
+          tagRecord = { id: result.lastInsertRowid, name: tagName };
+        }
+
+        // Add tag to each book
+        for (const bookId of bookIds) {
+          try {
+            db.prepare('INSERT INTO book_tags (book_id, tag_id) VALUES (?, ?)').run(bookId, tagRecord.id);
+          } catch (err) {
+            // Ignore duplicate entries
+            if (!err.message.includes('UNIQUE constraint failed')) {
+              throw err;
+            }
+          }
+        }
+      }
+    });
+
+    transaction();
+
+    res.json({
+      message: `Successfully added ${tags.length} tag(s) to ${bookIds.length} book(s)`,
+      bookIds,
+      tags
+    });
+  } catch (error) {
+    console.error('Error bulk adding tags:', error);
+    res.status(500).json({ error: 'Failed to add tags' });
+  }
+});
+
+// Bulk remove tags from multiple books
+router.delete('/bulk/tags', (req, res) => {
+  try {
+    const { bookIds, tagIds } = req.body;
+
+    if (!bookIds || !Array.isArray(bookIds) || bookIds.length === 0) {
+      return res.status(400).json({ error: 'Book IDs are required' });
+    }
+
+    let query = 'DELETE FROM book_tags WHERE book_id IN (' + bookIds.map(() => '?').join(',') + ')';
+    const params = [...bookIds];
+
+    if (tagIds && Array.isArray(tagIds) && tagIds.length > 0) {
+      query += ' AND tag_id IN (' + tagIds.map(() => '?').join(',') + ')';
+      params.push(...tagIds);
+    }
+
+    const result = db.prepare(query).run(...params);
+
+    res.json({
+      message: `Removed tags from ${bookIds.length} book(s)`,
+      removed: result.changes
+    });
+  } catch (error) {
+    console.error('Error bulk removing tags:', error);
+    res.status(500).json({ error: 'Failed to remove tags' });
+  }
+});
+
+// Bulk delete books
+router.delete('/bulk/delete', (req, res) => {
+  try {
+    const { bookIds } = req.body;
+
+    if (!bookIds || !Array.isArray(bookIds) || bookIds.length === 0) {
+      return res.status(400).json({ error: 'Book IDs are required' });
+    }
+
+    const query = 'DELETE FROM books WHERE id IN (' + bookIds.map(() => '?').join(',') + ')';
+    const result = db.prepare(query).run(...bookIds);
+
+    res.json({
+      message: `Successfully deleted ${result.changes} book(s)`,
+      deleted: result.changes
+    });
+  } catch (error) {
+    console.error('Error bulk deleting books:', error);
+    res.status(500).json({ error: 'Failed to delete books' });
+  }
+});
+
+// Bulk update metadata
+router.put('/bulk/update', (req, res) => {
+  try {
+    const { bookIds, updates } = req.body;
+
+    if (!bookIds || !Array.isArray(bookIds) || bookIds.length === 0) {
+      return res.status(400).json({ error: 'Book IDs are required' });
+    }
+
+    if (!updates || Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Updates are required' });
+    }
+
+    // Build dynamic update query
+    const allowedFields = ['author', 'language'];
+    const updateFields = [];
+    const params = [];
+
+    for (const [field, value] of Object.entries(updates)) {
+      if (allowedFields.includes(field) && value !== undefined) {
+        updateFields.push(`${field} = ?`);
+        params.push(value);
+      }
+    }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    // Execute update for each book
+    const transaction = db.transaction(() => {
+      const query = `UPDATE books SET ${updateFields.join(', ')}, last_modified = CURRENT_TIMESTAMP WHERE id = ?`;
+      const stmt = db.prepare(query);
+
+      for (const bookId of bookIds) {
+        stmt.run(...params, bookId);
+      }
+    });
+
+    transaction();
+
+    res.json({
+      message: `Successfully updated ${bookIds.length} book(s)`,
+      bookIds,
+      updates
+    });
+  } catch (error) {
+    console.error('Error bulk updating books:', error);
+    res.status(500).json({ error: 'Failed to update books' });
+  }
+});
+
+// Individual book routes
+
 // Get all books with pagination and filtering
 router.get('/', (req, res) => {
   try {
