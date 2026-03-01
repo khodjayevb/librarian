@@ -103,10 +103,12 @@ router.post('/', async (req, res) => {
             INSERT INTO books (
               title, author, language, file_path, file_size,
               page_count, pdf_type, ocr_confidence, needs_review,
+              publication_year, isbn, publisher, edition, description,
               manual_metadata, date_added, last_modified
             ) VALUES (
               @title, @author, @language, @file_path, @file_size,
               @page_count, @pdf_type, @ocr_confidence, @needs_review,
+              @publication_year, @isbn, @publisher, @edition, @description,
               @manual_metadata, @date_added, @last_modified
             )
           `);
@@ -121,6 +123,11 @@ router.post('/', async (req, res) => {
             pdf_type: pdfData.pdfType,
             ocr_confidence: pdfData.ocrData?.confidence || null,
             needs_review: pdfData.needsReview ? 1 : 0,
+            publication_year: pdfData.metadata?.publicationYear || pdfData.metadata?.yearFromFilename || null,
+            isbn: pdfData.metadata?.isbn || null,
+            publisher: pdfData.metadata?.publisher || null,
+            edition: pdfData.metadata?.edition || null,
+            description: pdfData.metadata?.description || null,
             manual_metadata: JSON.stringify(pdfData.metadata || {}),
             date_added: pdf.modified.toISOString(),
             last_modified: pdf.modified.toISOString()

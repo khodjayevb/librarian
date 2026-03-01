@@ -126,8 +126,94 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
               )}
             </div>
 
-            {/* Metadata Grid */}
+            {/* ISBN and Publisher */}
             <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">ISBN</label>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={editedBook.isbn || ''}
+                    onChange={(e) => setEditedBook({ ...editedBook, isbn: e.target.value })}
+                    placeholder="978-0-123456-78-9"
+                  />
+                ) : (
+                  <p className="text-gray-900 font-mono">{book.isbn || 'Not available'}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Publisher</label>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={editedBook.publisher || ''}
+                    onChange={(e) => setEditedBook({ ...editedBook, publisher: e.target.value })}
+                    placeholder="Publisher name"
+                  />
+                ) : (
+                  <p className="text-gray-900">{book.publisher || 'Unknown'}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Edition and Description */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Edition</label>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={editedBook.edition || ''}
+                    onChange={(e) => setEditedBook({ ...editedBook, edition: e.target.value })}
+                    placeholder="e.g. 2nd Edition"
+                  />
+                ) : (
+                  <p className="text-gray-900">{book.edition || 'Not specified'}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Publication Year</label>
+                {isEditing ? (
+                  <input
+                    type="number"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={editedBook.publication_year || ''}
+                    onChange={(e) => setEditedBook({ ...editedBook, publication_year: e.target.value ? parseInt(e.target.value) : null })}
+                    placeholder="e.g. 2024"
+                    min="1900"
+                    max={new Date().getFullYear()}
+                  />
+                ) : (
+                  <p className="text-gray-900">{book.publication_year || 'Unknown'}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Description */}
+            {(book.description || isEditing) && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                {isEditing ? (
+                  <textarea
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={editedBook.description || ''}
+                    onChange={(e) => setEditedBook({ ...editedBook, description: e.target.value })}
+                    placeholder="Book description..."
+                    rows="3"
+                  />
+                ) : (
+                  <p className="text-gray-900 text-sm">{book.description}</p>
+                )}
+              </div>
+            )}
+
+            {/* Metadata Grid */}
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Language</label>
                 {isEditing ? (
@@ -161,6 +247,20 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
                 <label className="block text-sm font-medium text-gray-700 mb-1">File Size</label>
                 <p className="text-gray-900">
                   {book.file_size ? `${(book.file_size / 1024 / 1024).toFixed(2)} MB` : 'Unknown'}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date Added</label>
+                <p className="text-gray-900">
+                  {book.date_added ? new Date(book.date_added).toLocaleDateString() : 'Unknown'}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Last Modified</label>
+                <p className="text-gray-900">
+                  {book.last_modified ? new Date(book.last_modified).toLocaleDateString() : 'Unknown'}
                 </p>
               </div>
             </div>

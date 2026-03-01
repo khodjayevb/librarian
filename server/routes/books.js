@@ -321,16 +321,16 @@ router.get('/:id', (req, res) => {
 // Add new book manually
 router.post('/', (req, res) => {
   try {
-    const { title, author, language, file_path, tags = [], categories = [] } = req.body;
+    const { title, author, language, file_path, publication_year, isbn, publisher, edition, description, tags = [], categories = [] } = req.body;
 
     if (!file_path) {
       return res.status(400).json({ error: 'File path is required' });
     }
 
     const result = db.prepare(`
-      INSERT INTO books (title, author, language, file_path, manual_metadata)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(title, author, language, file_path, JSON.stringify(req.body));
+      INSERT INTO books (title, author, language, file_path, publication_year, isbn, publisher, edition, description, manual_metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(title, author, language, file_path, publication_year, isbn, publisher, edition, description, JSON.stringify(req.body));
 
     const bookId = result.lastInsertRowid;
 
@@ -360,13 +360,13 @@ router.post('/', (req, res) => {
 // Update book metadata
 router.put('/:id', (req, res) => {
   try {
-    const { title, author, language, tags, categories } = req.body;
+    const { title, author, language, publication_year, isbn, publisher, edition, description, tags, categories } = req.body;
 
     db.prepare(`
       UPDATE books
-      SET title = ?, author = ?, language = ?, last_modified = CURRENT_TIMESTAMP
+      SET title = ?, author = ?, language = ?, publication_year = ?, isbn = ?, publisher = ?, edition = ?, description = ?, last_modified = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(title, author, language, req.params.id);
+    `).run(title, author, language, publication_year, isbn, publisher, edition, description, req.params.id);
 
     // Update tags if provided
     if (tags !== undefined) {

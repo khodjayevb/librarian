@@ -627,9 +627,26 @@ function App() {
                 <h3 className="font-semibold text-gray-800 dark:text-gray-100 mb-2 line-clamp-2" title={book.title}>
                   {book.title || 'Untitled'}
                 </h3>
-                <p className="text-gray-600 dark:text-gray-400 text-sm mb-2">
+                <p className="text-gray-600 dark:text-gray-400 text-sm mb-1">
                   {book.author || 'Unknown Author'}
                 </p>
+                <div className="space-y-1 mb-2">
+                  {book.publication_year && (
+                    <p className="text-gray-500 dark:text-gray-500 text-xs">
+                      Published: {book.publication_year}
+                    </p>
+                  )}
+                  {book.publisher && (
+                    <p className="text-gray-500 dark:text-gray-500 text-xs">
+                      {book.publisher}
+                    </p>
+                  )}
+                  {book.isbn && (
+                    <p className="text-gray-500 dark:text-gray-500 text-xs font-mono">
+                      ISBN: {book.isbn}
+                    </p>
+                  )}
+                </div>
                 <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                   <span className={`px-2 py-1 rounded ${
                     book.language === 'Russian' ? 'bg-blue-100 text-blue-800' :

@@ -149,10 +149,40 @@ const runMigrations = () => {
   // Check if thumbnail_path column exists
   const columns = db.prepare("PRAGMA table_info(books)").all();
   const hasThumbnailPath = columns.some(col => col.name === 'thumbnail_path');
+  const hasPublicationYear = columns.some(col => col.name === 'publication_year');
+  const hasISBN = columns.some(col => col.name === 'isbn');
+  const hasPublisher = columns.some(col => col.name === 'publisher');
+  const hasEdition = columns.some(col => col.name === 'edition');
+  const hasDescription = columns.some(col => col.name === 'description');
 
   if (!hasThumbnailPath) {
     db.exec('ALTER TABLE books ADD COLUMN thumbnail_path TEXT');
     console.log('✅ Added thumbnail_path column to books table');
+  }
+
+  if (!hasPublicationYear) {
+    db.exec('ALTER TABLE books ADD COLUMN publication_year INTEGER');
+    console.log('✅ Added publication_year column to books table');
+  }
+
+  if (!hasISBN) {
+    db.exec('ALTER TABLE books ADD COLUMN isbn TEXT');
+    console.log('✅ Added isbn column to books table');
+  }
+
+  if (!hasPublisher) {
+    db.exec('ALTER TABLE books ADD COLUMN publisher TEXT');
+    console.log('✅ Added publisher column to books table');
+  }
+
+  if (!hasEdition) {
+    db.exec('ALTER TABLE books ADD COLUMN edition TEXT');
+    console.log('✅ Added edition column to books table');
+  }
+
+  if (!hasDescription) {
+    db.exec('ALTER TABLE books ADD COLUMN description TEXT');
+    console.log('✅ Added description column to books table');
   }
 };
 

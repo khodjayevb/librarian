@@ -4,6 +4,7 @@ const pdf = require('pdf-parse');
 const { createWorker } = require('tesseract.js');
 const { franc } = require('franc');
 const sharp = require('sharp');
+const contentExtractor = require('./pdfContentExtractor');
 
 class PDFProcessor {
   constructor() {
@@ -71,15 +72,48 @@ class PDFProcessor {
       const dataBuffer = await fs.readFile(filePath);
       const data = await pdf(dataBuffer);
 
+      // Extract publication year from various sources
+      let publicationYear = null;
+
+      // Try to extract from creation date
+      if (data.info?.CreationDate) {
+        const dateMatch = data.info.CreationDate.match(/(\d{4})/);
+        if (dateMatch) {
+          const year = parseInt(dateMatch[1]);
+          // Only consider years that make sense for publications
+          if (year >= 1900 && year <= new Date().getFullYear()) {
+            publicationYear = year;
+          }
+        }
+      }
+
+      // Clean up author field - handle multiple authors
+      let author = data.info?.Author || null;
+      if (author) {
+        // Remove common artifacts
+        author = author
+          .replace(/\0/g, '') // Remove null characters
+          .replace(/[<>]/g, '') // Remove angle brackets
+          .trim();
+
+        // Handle multiple authors separated by semicolons, commas, or "and"
+        if (author.includes(';')) {
+          author = author.split(';').map(a => a.trim()).filter(a => a).join(', ');
+        } else if (author.includes(' and ')) {
+          author = author.split(' and ').map(a => a.trim()).filter(a => a).join(', ');
+        }
+      }
+
       return {
         title: data.info?.Title || null,
-        author: data.info?.Author || null,
+        author: author,
         subject: data.info?.Subject || null,
         keywords: data.info?.Keywords || null,
         creator: data.info?.Creator || null,
         producer: data.info?.Producer || null,
         creationDate: data.info?.CreationDate || null,
         modificationDate: data.info?.ModDate || null,
+        publicationYear: publicationYear,
         pageCount: data.numpages || 0,
         text: data.text.substring(0, 5000), // First 5000 chars for language detection
         version: data.version || null
@@ -192,6 +226,32 @@ class PDFProcessor {
       // Extract metadata
       result.metadata = await this.extractMetadata(filePath);
 
+      // Extract content-based metadata (ISBN, publisher, etc.)
+      console.log('Extracting content-based metadata...');
+      const contentMetadata = await contentExtractor.extractFromContent(filePath);
+      if (contentMetadata) {
+        console.log('Found content metadata:', {
+          isbn: contentMetadata.isbn,
+          publisher: contentMetadata.publisher,
+          year: contentMetadata.publicationYear,
+          authors: contentMetadata.authors ? 'Found' : 'Not found'
+        });
+
+        // Merge content metadata with existing metadata
+        result.metadata = {
+          ...result.metadata,
+          isbn: contentMetadata.isbn || result.metadata?.isbn,
+          publisher: contentMetadata.publisher || result.metadata?.publisher,
+          edition: contentMetadata.edition || result.metadata?.edition,
+          description: contentMetadata.description || result.metadata?.description,
+          // Prefer content-extracted year and authors as they're more reliable
+          publicationYear: contentMetadata.publicationYear || result.metadata?.publicationYear,
+          author: contentMetadata.authors || result.metadata?.author,
+          // Keep the full text for language detection
+          text: contentMetadata.fullText || result.metadata?.text
+        };
+      }
+
       // Detect language from extracted text
       if (result.metadata && result.metadata.text) {
         result.language = this.detectLanguage(result.metadata.text);
@@ -213,14 +273,25 @@ class PDFProcessor {
         result.needsReview = true;
       }
 
-      // Extract title and author if not in metadata
-      if (!result.metadata?.title || !result.metadata?.author) {
+      // Extract title, author, and year if not in metadata
+      if (!result.metadata?.title || !result.metadata?.author || !result.metadata?.publicationYear) {
         const fileName = path.basename(filePath, '.pdf');
+
+        // Try to extract year from filename first
+        let extractedYear = null;
+        const yearMatch = fileName.match(/\b(19\d{2}|20\d{2})\b/);
+        if (yearMatch) {
+          const year = parseInt(yearMatch[1]);
+          if (year >= 1900 && year <= new Date().getFullYear()) {
+            extractedYear = year;
+          }
+        }
 
         // Clean up filename - remove common suffixes and numbers at the end
         let cleanFileName = fileName
           .replace(/_\d+$/, '') // Remove trailing _5334 type numbers
-          .replace(/\s*-\s*\d{4}$/, '') // Remove trailing year - 2025
+          .replace(/\s*[-–—]\s*\d{4}$/, '') // Remove trailing year - 2025
+          .replace(/\s*\(\d{4}\)$/, '') // Remove year in parentheses (2025)
           .replace(/,?\s*\d+[-е]?\s*(изд|издание|edition|ed)\.?$/i, '') // Remove edition info
           .trim();
 
@@ -251,35 +322,47 @@ class PDFProcessor {
             // Check if looks like an author name (First Last or Last First format)
             const looksLikeAuthor = (text) => {
               const words = text.split(/\s+/);
-              // 2-3 words, first word capitalized, no special chars except dots
+              // 2-4 words, first word capitalized, no special chars except dots and commas
               return words.length >= 2 && words.length <= 4 &&
                      /^[A-ZА-ЯЁ][a-zа-яё]+/.test(words[0]) &&
                      !/[&+#@]/.test(text);
             };
 
+            // Handle multiple authors in patterns
+            const cleanAuthor = (text) => {
+              if (!text) return text;
+              // Split by common separators and clean
+              if (text.includes(',')) {
+                return text.split(',').map(a => a.trim()).filter(a => a && looksLikeAuthor(a)).join(', ');
+              } else if (text.includes('&')) {
+                return text.split('&').map(a => a.trim()).filter(a => a).join(', ');
+              }
+              return text;
+            };
+
             if (pattern === patterns[0]) {
               // English Name pattern - always Author - Title
-              extractedAuthor = part1;
+              extractedAuthor = cleanAuthor(part1);
               extractedTitle = part2;
             } else if (pattern === patterns[1] || pattern === patterns[2]) {
               // Dash patterns
               if (looksLikeAuthor(part1)) {
-                extractedAuthor = part1;
+                extractedAuthor = cleanAuthor(part1);
                 extractedTitle = part2;
               } else if (looksLikeAuthor(part2)) {
                 extractedTitle = part1;
-                extractedAuthor = part2;
+                extractedAuthor = cleanAuthor(part2);
               } else if (hasCyrillic(part1) && !hasCyrillic(part2)) {
                 // Cyrillic title, non-Cyrillic might be author
                 extractedTitle = part1;
-                extractedAuthor = part2;
+                extractedAuthor = cleanAuthor(part2);
               } else if (!hasCyrillic(part1) && hasCyrillic(part2)) {
                 // Non-Cyrillic might be author, Cyrillic title
-                extractedAuthor = part1;
+                extractedAuthor = cleanAuthor(part1);
                 extractedTitle = part2;
               } else {
                 // Default: Author - Title
-                extractedAuthor = part1;
+                extractedAuthor = cleanAuthor(part1);
                 extractedTitle = part2;
               }
             } else if (pattern === patterns[3]) {
@@ -294,14 +377,22 @@ class PDFProcessor {
             } else if (pattern === patterns[4]) {
               // Comma pattern
               if (looksLikeAuthor(part1)) {
-                extractedAuthor = part1;
+                extractedAuthor = cleanAuthor(part1);
                 extractedTitle = part2;
               } else {
                 extractedTitle = cleanFileName; // Keep original if unclear
               }
+            } else if (pattern === patterns[5]) {
+              // "by" pattern - Title by Author
+              extractedTitle = part1;
+              extractedAuthor = cleanAuthor(part2);
+            } else if (pattern === patterns[6]) {
+              // Parentheses pattern - Title (Author)
+              extractedTitle = part1;
+              extractedAuthor = cleanAuthor(part2);
             } else {
               extractedTitle = part1;
-              extractedAuthor = part2;
+              extractedAuthor = cleanAuthor(part2);
             }
             break;
           }
@@ -312,6 +403,7 @@ class PDFProcessor {
         }
         result.metadata.titleFromFilename = extractedTitle;
         result.metadata.authorFromFilename = extractedAuthor;
+        result.metadata.yearFromFilename = extractedYear;
       }
 
     } catch (error) {
