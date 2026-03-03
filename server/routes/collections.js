@@ -255,7 +255,6 @@ router.put('/:id/books/reorder', (req, res) => {
 router.post('/init-defaults', (req, res) => {
   try {
     const defaultCollections = [
-      { name: 'Currently Reading', icon: '📖', color: '#10B981' },
       { name: 'Want to Read', icon: '📚', color: '#3B82F6' },
       { name: 'Favorites', icon: '⭐', color: '#F59E0B' },
       { name: 'Completed', icon: '✅', color: '#8B5CF6' }

@@ -1,16 +1,21 @@
 import React, { useState, useEffect } from 'react';
+import ReadingProgress from './ReadingProgress';
 
-function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
+function BookDetailModal({ book, isOpen, onClose, onUpdate, onRead, onCollectionChange }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedBook, setEditedBook] = useState(book || {});
   const [tags, setTags] = useState([]);
   const [newTag, setNewTag] = useState('');
   const [isEnrichingMetadata, setIsEnrichingMetadata] = useState(false);
+  const [collections, setCollections] = useState([]);
+  const [bookCollections, setBookCollections] = useState([]);
 
   useEffect(() => {
     setEditedBook(book || {});
     if (book?.id) {
       fetchTags(book.id);
+      fetchCollections();
+      fetchBookCollections(book.id);
     }
   }, [book]);
 
@@ -24,17 +29,85 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
     }
   };
 
+  const fetchCollections = async () => {
+    try {
+      const response = await fetch('http://localhost:3001/api/collections');
+      const data = await response.json();
+      setCollections(data.collections || []);
+    } catch (error) {
+      console.error('Failed to fetch collections:', error);
+    }
+  };
+
+  const fetchBookCollections = async (bookId) => {
+    try {
+      const response = await fetch(`http://localhost:3001/api/books/${bookId}/collections`);
+      const data = await response.json();
+      setBookCollections(data.collections || []);
+    } catch (error) {
+      console.error('Failed to fetch book collections:', error);
+    }
+  };
+
+  const toggleCollection = async (collectionId) => {
+    if (!book?.id) return;
+
+    const isInCollection = bookCollections.some(c => c.id === collectionId);
+
+    try {
+      if (isInCollection) {
+        // Remove from collection
+        await fetch(`http://localhost:3001/api/collections/${collectionId}/books/${book.id}`, {
+          method: 'DELETE'
+        });
+        setBookCollections(bookCollections.filter(c => c.id !== collectionId));
+      } else {
+        // Add to collection
+        await fetch(`http://localhost:3001/api/collections/${collectionId}/books`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bookIds: [book.id] })
+        });
+        const collection = collections.find(c => c.id === collectionId);
+        if (collection) {
+          setBookCollections([...bookCollections, collection]);
+        }
+      }
+
+      // Trigger collection refresh with a small delay to ensure DB is updated
+      if (onCollectionChange) {
+        setTimeout(() => {
+          onCollectionChange();
+        }, 100);
+      }
+    } catch (error) {
+      console.error('Failed to update collection:', error);
+    }
+  };
+
   const handleSave = async () => {
     try {
+      // Only send fields that were actually edited, don't include thumbnail_path
+      // unless it was explicitly changed
+      const fieldsToUpdate = { ...editedBook };
+
+      // Remove thumbnail_path if it's not being explicitly updated
+      // This prevents accidentally setting it to undefined/null
+      if (!('thumbnail_path' in editedBook)) {
+        delete fieldsToUpdate.thumbnail_path;
+      }
+
       const response = await fetch(`http://localhost:3001/api/books/${book.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editedBook),
+        body: JSON.stringify(fieldsToUpdate),
       });
 
       if (response.ok) {
         const updatedBook = await response.json();
-        onUpdate(updatedBook);
+        // Merge with current book to ensure we have all fields
+        const mergedBook = { ...book, ...updatedBook };
+        onUpdate(mergedBook);
         setIsEditing(false);
       }
     } catch (error) {
@@ -97,9 +170,21 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
       const data = await response.json();
 
       if (data.success && data.book) {
+        // Merge enriched metadata with existing book data to preserve thumbnail
+        const updatedBook = {
+          ...book,
+          ...data.book,
+          thumbnail_path: book.thumbnail_path || data.book.thumbnail_path // Preserve original thumbnail
+        };
+
         // Update the book with enriched metadata
-        onUpdate(data.book);
-        setEditedBook(data.book);
+        onUpdate(updatedBook);
+        setEditedBook(updatedBook);
+
+        // Trigger collection refresh if needed
+        if (onCollectionChange) {
+          onCollectionChange();
+        }
 
         // Show success message
         alert(`Metadata enriched successfully!\nSource: ${data.book.metadata_source || 'Multiple sources'}`);
@@ -344,6 +429,34 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
               )}
             </div>
 
+            {/* Collections */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Collections</label>
+              <div className="flex flex-wrap gap-2">
+                {collections.map(collection => {
+                  const isInCollection = bookCollections.some(c => c.id === collection.id);
+                  return (
+                    <button
+                      key={collection.id}
+                      onClick={() => toggleCollection(collection.id)}
+                      className={`px-4 py-2 rounded-lg border-2 transition-all ${
+                        isInCollection
+                          ? 'bg-blue-500 text-white border-blue-500'
+                          : 'bg-white text-gray-700 border-gray-300 hover:border-blue-500'
+                      }`}
+                    >
+                      <span className="mr-2">{collection.icon || '📁'}</span>
+                      {collection.name}
+                      {isInCollection && <span className="ml-2">✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {collections.length === 0 && (
+                <p className="text-gray-500 text-sm italic">No collections available</p>
+              )}
+            </div>
+
             {/* Status Indicators */}
             <div className="flex gap-4">
               {book.needs_review === 1 && (
@@ -382,6 +495,19 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
               </div>
             )}
 
+            {/* Reading Progress Section */}
+            {book && (
+              <div className="pt-4 border-t">
+                <ReadingProgress
+                  book={book}
+                  onUpdate={() => {
+                    // Optionally refresh book data if needed
+                    console.log('Progress updated');
+                  }}
+                />
+              </div>
+            )}
+
             {/* Action Buttons */}
             <div className="flex justify-between pt-4 border-t">
               <div className="flex gap-2">
@@ -391,6 +517,15 @@ function BookDetailModal({ book, isOpen, onClose, onUpdate }) {
                 >
                   Open PDF
                 </button>
+
+                {onRead && (
+                  <button
+                    onClick={onRead}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+                  >
+                    📖 Read
+                  </button>
+                )}
 
                 <button
                   onClick={handleEnrichMetadata}

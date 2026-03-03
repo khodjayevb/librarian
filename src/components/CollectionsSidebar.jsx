@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBookIds, isSelectionMode }) {
+function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBookIds, isSelectionMode, onBooksAdded }) {
   const [collections, setCollections] = useState([]);
   const [isCreating, setIsCreating] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
@@ -72,6 +72,9 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
         const result = await response.json();
         alert(result.message);
         await loadCollections(); // Refresh counts
+        if (onBooksAdded) {
+          onBooksAdded(); // Trigger parent refresh
+        }
       }
     } catch (error) {
       console.error('Failed to add books to collection:', error);
@@ -100,7 +103,7 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
   };
 
   return (
-    <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 h-full overflow-y-auto transition-colors duration-200">
+    <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 h-screen sticky top-0 overflow-y-auto transition-colors duration-200">
       <div className="p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">Collections</h2>
@@ -161,6 +164,23 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
             <div className="flex items-center space-x-2">
               <span className="text-xl">📚</span>
               <span className="font-medium text-gray-800 dark:text-gray-100">All Books</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Currently Reading - Special Collection */}
+        <div
+          className={`p-3 rounded-lg cursor-pointer transition-colors ${
+            selectedCollection === 'currently-reading'
+              ? 'bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
+              : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+          }`}
+          onClick={() => onCollectionSelect('currently-reading')}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <span className="text-xl">📖</span>
+              <span className="font-medium text-gray-800 dark:text-gray-100">Currently Reading</span>
             </div>
           </div>
         </div>

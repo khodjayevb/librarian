@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import BookDetailModal from './components/BookDetailModal';
+import BookCard from './components/BookCard';
 import BulkActionsModal from './components/BulkActionsModal';
 import CollectionsSidebar from './components/CollectionsSidebar';
 import FullTextSearch from './components/FullTextSearch';
+import ReadingProgress from './components/ReadingProgress';
+import ReadingStatsDashboard from './components/ReadingStatsDashboard';
+import PDFViewer from './components/PDFViewer';
+import EpubViewer from './components/EpubViewer';
 import useDarkMode from './hooks/useDarkMode';
 
 function App() {
@@ -25,8 +30,21 @@ function App() {
   // Full-text search state
   const [showFullTextSearch, setShowFullTextSearch] = useState(false);
 
+  // Reading stats state
+  const [showReadingStats, setShowReadingStats] = useState(false);
+
+  // PDF Viewer state
+  const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
+  const [currentPdfBook, setCurrentPdfBook] = useState(null);
+
+  // ePUB Viewer state
+  const [epubViewerOpen, setEpubViewerOpen] = useState(false);
+  const [currentEpubBook, setCurrentEpubBook] = useState(null);
+
+  const [collectionsRefreshKey, setCollectionsRefreshKey] = useState(0);
+
   // Advanced filtering states
-  const [selectedTags, setSelectedTags] = useState([]);
+  const [selectedTag, setSelectedTag] = useState('');
   const [selectedAuthor, setSelectedAuthor] = useState('');
   const [selectedFileType, setSelectedFileType] = useState('');
   const [sortBy, setSortBy] = useState('title'); // title, date_added, file_size
@@ -37,7 +55,7 @@ function App() {
     !book.language || book.language === 'Not scanned'
   ).length;
 
-  // Function to open PDF
+  // Function to open PDF externally
   const handleOpenPDF = async (bookId) => {
     try {
       const response = await fetch(`http://localhost:3001/api/books/${bookId}/open`, {
@@ -50,6 +68,25 @@ function App() {
       console.error('Error opening PDF:', error);
     }
   };
+
+  // Function to open book in appropriate viewer
+  const handleReadBook = (book) => {
+    // Determine file type from extension
+    const ext = book.file_path?.split('.').pop()?.toLowerCase();
+
+    if (ext === 'pdf') {
+      setCurrentPdfBook(book);
+      setPdfViewerOpen(true);
+    } else if (ext === 'epub') {
+      setCurrentEpubBook(book);
+      setEpubViewerOpen(true);
+    }
+
+    setIsModalOpen(false); // Close detail modal if open
+  };
+
+  // Legacy function for backward compatibility
+  const handleReadPDF = handleReadBook;
 
   // Extract unique values for filters
   const allTags = [...new Set(books.flatMap(book => book.tags || []))];
@@ -70,8 +107,7 @@ function App() {
         (book.author || '').toLowerCase().includes(query);
 
       // Tag filter
-      const matchesTags = selectedTags.length === 0 ||
-        selectedTags.every(tag => book.tags?.includes(tag));
+      const matchesTags = !selectedTag || book.tags?.includes(selectedTag);
 
       // Author filter
       const matchesAuthor = !selectedAuthor ||
@@ -110,9 +146,17 @@ function App() {
     });
 
     return filtered;
-  }, [books, searchQuery, selectedTags, selectedAuthor, selectedFileType, sortBy, sortOrder]);
+  }, [books, searchQuery, selectedTag, selectedAuthor, selectedFileType, sortBy, sortOrder]);
 
   useEffect(() => {
+    // Load books on mount
+    loadBooks();
+
+    // Set up auto-refresh to check for new books added by background tasks
+    const refreshInterval = setInterval(() => {
+      loadBooks();
+    }, 30000); // Refresh every 30 seconds
+
     // Set up listeners for Electron menu events if available
     if (window.electronAPI) {
       window.electronAPI.onImportBooks(() => {
@@ -122,7 +166,7 @@ function App() {
 
       window.electronAPI.onScanLibrary(() => {
         console.log('Scan library triggered');
-        handleScanLibrary();
+        loadBooks(); // Just refresh the book list
       });
 
       window.electronAPI.onOpenPreferences(() => {
@@ -131,13 +175,18 @@ function App() {
       });
 
       return () => {
+        clearInterval(refreshInterval);
         // Cleanup listeners
         window.electronAPI.removeAllListeners('import-books');
         window.electronAPI.removeAllListeners('scan-library');
         window.electronAPI.removeAllListeners('open-preferences');
       };
     }
-  }, []);
+
+    return () => {
+      clearInterval(refreshInterval);
+    };
+  }, [selectedCollection]);
 
   const handleScanLibrary = async () => {
     setLoading(true);
@@ -201,8 +250,46 @@ function App() {
 
   const loadBooks = async () => {
     try {
-      // If a collection is selected, load books from that collection
-      if (selectedCollection) {
+      // Handle special "currently-reading" collection
+      if (selectedCollection === 'currently-reading') {
+        // First get all books that have reading progress
+        const progressResponse = await fetch('http://localhost:3001/api/progress/reading/all?status=reading');
+        const progressData = await progressResponse.json();
+
+        // The API returns books directly with progress data, just use them
+        if (progressData.length > 0) {
+          // Fetch full book details for the currently reading books
+          const bookIds = progressData.map(item => item.id);
+          const booksResponse = await fetch('http://localhost:3001/api/books?limit=500');
+          const booksData = await booksResponse.json();
+
+          // Filter to only currently reading books and merge with progress
+          const booksWithProgress = booksData.books
+            .filter(book => bookIds.includes(book.id))
+            .map(book => {
+              const progress = progressData.find(p => p.id === book.id);
+              return {
+                ...book,
+                readingProgress: {
+                  current_page: progress.current_page,
+                  total_pages: progress.total_pages,
+                  percentage: progress.percentage,
+                  last_read: progress.last_read,
+                  started_reading: progress.started_reading,
+                  reading_status: progress.reading_status
+                }
+              };
+            });
+
+          setBooks(booksWithProgress);
+          setCollectionBooks(booksWithProgress);
+        } else {
+          // No books currently being read
+          setBooks([]);
+          setCollectionBooks([]);
+        }
+      } else if (selectedCollection) {
+        // Regular collection
         const response = await fetch(`http://localhost:3001/api/collections/${selectedCollection}`);
         const data = await response.json();
         console.log('Loaded collection books:', data);
@@ -326,10 +413,16 @@ function App() {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex transition-colors duration-200">
       {/* Collections Sidebar */}
       <CollectionsSidebar
+        key={collectionsRefreshKey}
         selectedCollection={selectedCollection}
         onCollectionSelect={setSelectedCollection}
         selectedBookIds={selectedBookIds}
         isSelectionMode={isSelectionMode}
+        onBooksAdded={() => {
+          // Refresh when books are added from sidebar
+          loadBooks();
+          setCollectionsRefreshKey(prev => prev + 1);
+        }}
       />
 
       {/* Main Content */}
@@ -385,6 +478,21 @@ function App() {
                 </svg>
               </button>
 
+              {/* Reading stats toggle */}
+              <button
+                onClick={() => setShowReadingStats(!showReadingStats)}
+                className={`p-2 rounded-lg transition-colors ${
+                  showReadingStats
+                    ? 'bg-purple-500 text-white hover:bg-purple-600'
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+                }`}
+                title={showReadingStats ? 'Close reading statistics' : 'Open reading statistics'}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </button>
+
               {/* Dark mode toggle */}
               <button
                 onClick={toggleDarkMode}
@@ -403,12 +511,7 @@ function App() {
               </button>
 
               <span className="text-sm text-gray-600 dark:text-gray-400">
-                {loading ? 'Loading...' : (searchQuery || selectedTags.length > 0 || selectedAuthor || selectedFileType) ? `${filteredAndSortedBooks.length} of ${books.length}` : `${books.length} books`}
-                {unprocessedCount > 0 && !loading && (
-                  <span className="ml-2 text-orange-600">
-                    ({unprocessedCount} unprocessed)
-                  </span>
-                )}
+                {loading ? 'Loading...' : (searchQuery || selectedTag || selectedAuthor || selectedFileType) ? `${filteredAndSortedBooks.length} of ${books.length}` : `${books.length} books`}
               </span>
               <input
                 type="text"
@@ -423,34 +526,6 @@ function App() {
               >
                 {isSelectionMode ? '✓ Selecting' : 'Select'}
               </button>
-              <button
-                onClick={loadBooks}
-                disabled={loading}
-                className="px-4 py-2 bg-gray-500 dark:bg-gray-600 text-white rounded-lg hover:bg-gray-600 dark:hover:bg-gray-500 disabled:opacity-50 transition-colors"
-              >
-                Refresh
-              </button>
-              <button
-                onClick={handleScanLibrary}
-                disabled={loading}
-                className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                {loading ? 'Scanning...' : 'Scan Library'}
-              </button>
-              <button
-                onClick={handleProcessBooks}
-                disabled={loading}
-                className="px-4 py-2 bg-green-500 dark:bg-green-600 text-white rounded-lg hover:bg-green-600 dark:hover:bg-green-700 disabled:opacity-50 transition-colors"
-              >
-                {loading ? 'Processing...' : 'Process Books'}
-              </button>
-              <button
-                onClick={handleGenerateThumbnails}
-                disabled={loading}
-                className="px-4 py-2 bg-purple-500 dark:bg-purple-600 text-white rounded-lg hover:bg-purple-600 dark:hover:bg-purple-700 disabled:opacity-50 transition-colors"
-              >
-                📷 Generate Covers
-              </button>
             </div>
           </div>
         </div>
@@ -462,14 +537,13 @@ function App() {
           {/* Tag Filter */}
           {allTags.length > 0 && (
             <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Tags:</label>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Tag:</label>
               <select
-                multiple
                 className="px-3 py-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={selectedTags}
-                onChange={(e) => setSelectedTags(Array.from(e.target.selectedOptions, option => option.value))}
-                style={{minWidth: '120px', maxWidth: '200px'}}
+                value={selectedTag}
+                onChange={(e) => setSelectedTag(e.target.value)}
               >
+                <option value="">All Tags</option>
                 {allTags.map(tag => (
                   <option key={tag} value={tag}>{tag}</option>
                 ))}
@@ -532,10 +606,10 @@ function App() {
           </div>
 
           {/* Clear Filters */}
-          {(selectedTags.length > 0 || selectedAuthor || selectedFileType) && (
+          {(selectedTag || selectedAuthor || selectedFileType) && (
             <button
               onClick={() => {
-                setSelectedTags([]);
+                setSelectedTag('');
                 setSelectedAuthor('');
                 setSelectedFileType('');
               }}
@@ -560,6 +634,13 @@ function App() {
         </div>
       )}
 
+      {/* Reading Statistics Section */}
+      {showReadingStats && (
+        <div className="container mx-auto px-6 py-4">
+          <ReadingStatsDashboard isDark={isDark} />
+        </div>
+      )}
+
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
         {loading ? (
@@ -579,142 +660,39 @@ function App() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 lg:gap-6">
             {filteredAndSortedBooks.map((book) => (
-              <div
+              <BookCard
                 key={book.id}
-                className="bg-white dark:bg-gray-800 rounded-lg shadow-md hover:shadow-xl transition-all duration-200 cursor-pointer group relative overflow-hidden"
-                onClick={(e) => {
-                  // Don't open modal if clicking on checkbox
-                  if (e.target.type !== 'checkbox') {
+                book={book}
+                isSelected={selectedBookIds.has(book.id)}
+                onSelect={isSelectionMode || selectedBookIds.size > 0 ? (id, checked) => {
+                  if (checked) {
+                    setSelectedBookIds(new Set([...selectedBookIds, id]));
+                  } else {
+                    const newSet = new Set(selectedBookIds);
+                    newSet.delete(id);
+                    setSelectedBookIds(newSet);
+                  }
+                } : null}
+                onDoubleClick={() => handleReadPDF(book)}
+                onClick={() => {
+                  if (isSelectionMode) {
+                    const newSet = new Set(selectedBookIds);
+                    if (newSet.has(book.id)) {
+                      newSet.delete(book.id);
+                    } else {
+                      newSet.add(book.id);
+                    }
+                    setSelectedBookIds(newSet);
+                  } else {
                     setSelectedBook(book);
                     setIsModalOpen(true);
                   }
                 }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  handleOpenPDF(book.id);
-                }}
-                title="Double-click to open PDF"
-              >
-                {/* Checkbox for selection */}
-                {(isSelectionMode || selectedBookIds.size > 0) && (
-                  <div className="absolute top-2 left-2 z-10">
-                    <input
-                      type="checkbox"
-                      className="h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
-                      checked={selectedBookIds.has(book.id)}
-                      onChange={(e) => toggleBookSelection(book.id, e)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </div>
-                )}
-
-                {/* Remove from collection button */}
-                {selectedCollection && (
-                  <div className="absolute top-2 right-2 z-10">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (window.confirm('Remove this book from the collection?')) {
-                          removeBookFromCollection(book.id);
-                        }
-                      }}
-                      className="p-2 bg-red-500 text-white rounded-full hover:bg-red-600 shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Remove from collection"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                )}
-
-                {/* Book Cover Image */}
-                <div className="h-48 bg-gray-100 dark:bg-gray-700 flex items-center justify-center overflow-hidden">
-                  {book.thumbnail_url ? (
-                    <img
-                      src={book.thumbnail_url}
-                      alt={book.title || 'Book cover'}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                        e.target.nextSibling.style.display = 'flex';
-                      }}
-                    />
-                  ) : null}
-                  <div className={`text-gray-400 text-6xl ${book.thumbnail_url ? 'hidden' : 'flex'}`}>
-                    📚
-                  </div>
-                </div>
-
-                {/* Hover overlay with open button */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-end justify-center pb-4 pointer-events-none">
-                  <div className="text-white text-sm font-medium">
-                    Double-click to open PDF
-                  </div>
-                </div>
-
-                <div className="p-4">
-                <h3 className="font-semibold text-gray-800 dark:text-gray-100 mb-2 line-clamp-2" title={book.title}>
-                  {book.title || 'Untitled'}
-                </h3>
-                <p className="text-gray-600 dark:text-gray-400 text-sm mb-1">
-                  {book.author || 'Unknown Author'}
-                </p>
-                <div className="space-y-1 mb-2">
-                  {book.publication_year && (
-                    <p className="text-gray-500 dark:text-gray-500 text-xs">
-                      Published: {book.publication_year}
-                    </p>
-                  )}
-                  {book.publisher && (
-                    <p className="text-gray-500 dark:text-gray-500 text-xs">
-                      {book.publisher}
-                    </p>
-                  )}
-                  {book.isbn && (
-                    <p className="text-gray-500 dark:text-gray-500 text-xs font-mono">
-                      ISBN: {book.isbn}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                  <span className={`px-2 py-1 rounded ${
-                    book.language === 'Russian' ? 'bg-blue-100 text-blue-800' :
-                    book.language === 'English' ? 'bg-green-100 text-green-800' :
-                    book.language === 'unknown' ? 'bg-yellow-100 text-yellow-800' :
-                    !book.language || book.language === 'Not scanned' ? 'bg-red-100 text-red-800' :
-                    'bg-gray-100 text-gray-600'
-                  }`}>
-                    {!book.language || book.language === 'Not scanned' ? '⚠️ Not processed' :
-                     book.language === 'unknown' ? 'Unknown' :
-                     book.language}
-                  </span>
-                  {book.page_count && <span>{book.page_count} pages</span>}
-                </div>
-                {book.pdf_type && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className={`text-xs px-2 py-0.5 rounded ${
-                      book.pdf_type === 'searchable' ? 'bg-green-50 text-green-700' :
-                      book.pdf_type === 'scanned' ? 'bg-orange-50 text-orange-700' :
-                      book.pdf_type === 'mixed' ? 'bg-purple-50 text-purple-700' :
-                      book.pdf_type === 'unknown' ? 'bg-yellow-50 text-yellow-700' :
-                      'bg-gray-50 text-gray-600'
-                    }`}>
-                      {book.pdf_type === 'searchable' ? '📝 Searchable' :
-                       book.pdf_type === 'scanned' ? '📷 Scanned' :
-                       book.pdf_type === 'mixed' ? '📑 Mixed' :
-                       book.pdf_type === 'unknown' ? '❓ Unknown' :
-                       book.pdf_type}
-                    </span>
-                    {book.needs_review === 1 && (
-                      <span className="text-xs text-red-600">⚠️ Needs Review</span>
-                    )}
-                  </div>
-                )}
-                </div>
-              </div>
+                onRemoveFromCollection={selectedCollection ? removeBookFromCollection : null}
+                selectedCollection={selectedCollection}
+              />
             ))}
           </div>
         )}
@@ -740,6 +718,12 @@ function App() {
             setSelectedBook(updatedBook);
           }
         }}
+        onRead={() => handleReadPDF(selectedBook)}
+        onCollectionChange={() => {
+          // Reload books and refresh sidebar
+          loadBooks();
+          setCollectionsRefreshKey(prev => prev + 1);
+        }}
       />
 
       <BulkActionsModal
@@ -749,6 +733,31 @@ function App() {
         onBulkAction={handleBulkAction}
         allTags={allTags}
       />
+
+      {/* PDF Viewer */}
+      <PDFViewer
+        book={currentPdfBook}
+        filePath={currentPdfBook?.file_path}
+        isOpen={pdfViewerOpen}
+        onClose={() => {
+          setPdfViewerOpen(false);
+          setCurrentPdfBook(null);
+        }}
+        isDark={isDark}
+      />
+
+      {/* ePUB Viewer */}
+      {epubViewerOpen && currentEpubBook && (
+        <EpubViewer
+          bookId={currentEpubBook.id}
+          filePath={currentEpubBook.file_path}
+          onClose={() => {
+            setEpubViewerOpen(false);
+            setCurrentEpubBook(null);
+            loadBooks(); // Refresh to show updated progress
+          }}
+        />
+      )}
       </div>
     </div>
   );

@@ -13,9 +13,13 @@ const processRouter = require('./routes/process');
 const collectionsRouter = require('./routes/collections');
 const searchRouter = require('./routes/search');
 const ocrRouter = require('./routes/ocr');
+const progressRouter = require('./routes/progress');
 
 // Initialize database
 const db = require('./database/init');
+
+// Initialize background task manager
+const backgroundTaskManager = require('./services/backgroundTaskManager');
 
 // Configure logger
 const logger = winston.createLogger({
@@ -45,9 +49,9 @@ app.use(express.urlencoded({ extended: true }));
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Serve PDF files - using middleware approach
+// Serve PDF and ePUB files - using middleware approach
 app.use('/pdf', (req, res, next) => {
-  // Handle both GET and HEAD requests for PDFs
+  // Handle both GET and HEAD requests for PDFs and ePUBs
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return next();
   }
@@ -59,8 +63,18 @@ app.use('/pdf', (req, res, next) => {
   // Check if file exists and send it
   const fs = require('fs');
   if (fs.existsSync(fullPath)) {
-    // Set appropriate headers for PDF
-    res.setHeader('Content-Type', 'application/pdf');
+    // Determine content type based on file extension
+    const ext = path.extname(fullPath).toLowerCase();
+    let contentType = 'application/octet-stream';
+
+    if (ext === '.pdf') {
+      contentType = 'application/pdf';
+    } else if (ext === '.epub') {
+      contentType = 'application/epub+zip';
+    }
+
+    // Set appropriate headers
+    res.setHeader('Content-Type', contentType);
 
     if (req.method === 'HEAD') {
       // For HEAD requests, just send headers without body
@@ -73,7 +87,7 @@ app.use('/pdf', (req, res, next) => {
       res.sendFile(absolutePath);
     }
   } else {
-    console.log('PDF not found:', fullPath);
+    console.log('File not found:', fullPath);
     res.status(404).json({ error: 'File not found', path: fullPath });
   }
 });
@@ -93,6 +107,7 @@ app.use('/api/process', processRouter);
 app.use('/api/collections', collectionsRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/ocr', ocrRouter);
+app.use('/api/progress', progressRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -124,14 +139,30 @@ app.use((req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   logger.info(`Server running on port ${PORT}`);
   console.log(`\n🚀 Librarian server running on http://localhost:${PORT}\n`);
+
+  // Initialize background tasks
+  try {
+    await backgroundTaskManager.initialize();
+    logger.info('Background tasks initialized');
+  } catch (error) {
+    logger.error('Failed to initialize background tasks:', error);
+  }
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down gracefully');
+  await backgroundTaskManager.shutdown();
+  db.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  await backgroundTaskManager.shutdown();
   db.close();
   process.exit(0);
 });

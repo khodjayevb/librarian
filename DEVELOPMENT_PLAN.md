@@ -4,8 +4,8 @@
 
 **Name:** Librarian
 **Purpose:** Personal book catalog application for macOS
-**Status:** Phase 8 - Full-Text Search & OCR Complete
-**Last Updated:** 2026-03-01
+**Status:** Phase 9 - Reading Progress & PDF Viewer Implementation
+**Last Updated:** 2026-03-03
 
 ### Core Requirements
 
@@ -60,6 +60,16 @@
 - **Enhanced OCR with Tesseract.js for scanned PDFs**
 - **OCR API endpoints for processing scanned documents**
 - **Multi-language OCR support (Russian & English)**
+- **Integrated PDF viewer with react-pdf**
+- **Automatic reading progress tracking with page saves**
+- **Reading progress API with status management**
+- **Currently Reading collection with active books**
+- **Collection management in BookDetailModal**
+- **Auto-fit PDF scaling with 170% default zoom**
+- **Full ePUB support with cover extraction**
+- **Professional book card design with prominent thumbnails**
+- **Simplified UI with essential book information**
+- **Fixed Collections sidebar (sticky positioning)**
 
 ### 🚧 Next Priority Tasks
 
@@ -67,10 +77,10 @@
    - Create collections based on rules
    - Auto-update when new books match criteria
    - Custom rule builder UI
-2. **Reading Progress Tracking**
-   - Track current page per book
-   - Calculate reading percentage
-   - Reading statistics
+2. **Reading Statistics Dashboard**
+   - Daily/weekly/monthly reading stats
+   - Books completed tracking
+   - Reading velocity and patterns
 3. **Enhanced OCR Processing**
    - Background OCR processing queue
    - Batch OCR for all scanned PDFs
@@ -78,7 +88,8 @@
 
 ### 📝 Known Issues
 
-- No reading progress tracking yet
+- Thumbnail preservation issue when adding books to collections (documented in TODO-thumbnail-issue.md)
+- PDF viewer worker loading sometimes requires page refresh
 - OCR processing not yet automated for entire library
 
 ---
@@ -103,6 +114,7 @@
 ### PDF Processing
 
 - **Text Extraction:** pdf-parse v1.1.1
+- **PDF Viewer:** react-pdf with pdfjs-dist
 - **OCR Engine:** Tesseract.js 5.x
 - **Full-Text Search:** SQLite FTS5
 - **Thumbnail Generation:** pdf2pic + GraphicsMagick
@@ -242,9 +254,28 @@
   - [x] Content indexing in FTS5 table
   - [x] OCR confidence scoring support
 
-### Phase 9: Future Enhancements 📋
+### Phase 9: Reading Progress & PDF Viewer ✅ IN PROGRESS
 
-- [ ] Reading progress tracking
+- [x] **Integrated PDF viewer component**
+  - [x] react-pdf integration with pdfjs-dist
+  - [x] In-app PDF reading without external apps
+  - [x] Page navigation controls
+  - [x] Zoom controls with auto-fit mode
+  - [x] Default 170% zoom for better readability
+- [x] **Automatic reading progress tracking**
+  - [x] Auto-save current page while reading
+  - [x] Progress percentage calculation
+  - [x] Reading status management (reading, completed, paused)
+  - [x] "Currently Reading" special collection
+  - [x] Last read timestamp tracking
+- [x] **Collection management enhancements**
+  - [x] Add/remove books from collections in BookDetailModal
+  - [x] Collection refresh on changes
+  - [ ] Fix thumbnail preservation issue
+
+### Phase 10: Future Enhancements 📋
+
+- [ ] Reading statistics dashboard
 - [ ] Background OCR processing queue
 - [ ] Batch OCR for all scanned PDFs
 - [ ] Export/import functionality
@@ -400,6 +431,13 @@ book_collections (
 - `PUT /api/collections/:id/books/reorder` - Update book order in collection
 - `POST /api/collections/init-defaults` - Initialize default collections
 
+### Reading Progress
+
+- `GET /api/progress/:bookId` - Get reading progress for a book
+- `POST /api/progress/:bookId` - Update reading progress
+- `GET /api/progress/reading/all` - Get all currently reading books
+- `PUT /api/progress/:bookId/status` - Update reading status
+
 ### System
 
 - `POST /api/scan` - Trigger manual scan
@@ -434,7 +472,9 @@ book_collections (
 - ✅ Author extraction from PDF metadata (COMPLETE)
 - ✅ Full-text search inside PDFs (COMPLETE)
 - ✅ Dark/light theme toggle (COMPLETE)
-- ⏳ Reading progress tracking
+- ✅ Reading progress tracking (COMPLETE)
+- ✅ Integrated PDF viewer (COMPLETE)
+- ⏳ Reading statistics dashboard
 - ⏳ Quick preview panel
 
 ### Nice to Have 📋
@@ -450,7 +490,7 @@ book_collections (
 
 ### Future Ideas 💡
 
-- 💡 EPUB support
+- ✅ EPUB support (COMPLETE - with cover extraction)
 - 💡 Cloud sync (optional)
 - 💡 Mobile companion app
 - 💡 AI-powered summaries
@@ -504,7 +544,12 @@ Bibliotheka/
 ├── src/
 │   ├── components/
 │   │   ├── BookDetailModal.jsx
-│   │   └── CollectionsSidebar.jsx
+│   │   ├── BookCard.jsx
+│   │   ├── CollectionsSidebar.jsx
+│   │   ├── PDFViewer.jsx
+│   │   ├── EpubViewer.jsx
+│   │   ├── ReadingProgress.jsx
+│   │   └── FullTextSearch.jsx
 │   ├── pages/
 │   ├── hooks/
 │   │   └── useDarkMode.js
@@ -515,11 +560,15 @@ Bibliotheka/
 │   │   ├── books.js
 │   │   ├── scan.js
 │   │   ├── collections.js
+│   │   ├── progress.js
 │   │   └── tags.js
 │   ├── services/
 │   │   ├── thumbnailGeneratorPdf2pic.js
 │   │   ├── pdfProcessor.js
-│   │   └── pdfContentExtractor.js
+│   │   ├── pdfContentExtractor.js
+│   │   ├── epubProcessorSimple.js
+│   │   ├── epubProcessorImproved.js
+│   │   └── backgroundTaskManager.js
 │   ├── database/
 │   │   └── init.js
 │   └── index.js
@@ -573,6 +622,72 @@ Bibliotheka/
 ---
 
 ## Changelog
+
+### 2026-03-03 - ePUB Support & UI Improvements
+
+- ✅ **Fixed ePUB Support**:
+  - Resolved epub library API compatibility issues (event-based methods deprecated)
+  - Created simplified ePUB processor as workaround
+  - Fixed database schema issues with ePUB files
+  - Corrected thumbnail path storage (absolute to relative paths)
+- ✅ **Enhanced ePUB Thumbnail Extraction**:
+  - Implemented improved ePUB processor with real cover extraction
+  - Uses JSZip to read ePUB file structure
+  - Extracts actual cover images from OPF metadata
+  - Successfully extracted covers for all 39 ePUB files in library
+  - Replaced grey placeholders with actual book covers
+- ✅ **Redesigned Book Cards**:
+  - Professional design with prominent thumbnail display (3:4 aspect ratio)
+  - Hover effects with "Double-click to open" hint
+  - Language and PDF type badges
+  - Reading progress bar integrated at bottom
+- ✅ **UI Simplifications**:
+  - Removed unnecessary Refresh button (auto-refresh active)
+  - Converted Tags filter from multi-select to single dropdown
+  - Simplified book cards to show only: Title, Author, Year, Pages, Status, Progress
+  - Removed Publisher, ISBN, Edition, Description from cards (still in detail modal)
+  - Fixed Collections sidebar with sticky positioning
+- Technical improvements:
+  - Created epubProcessorImproved.js with cover extraction
+  - Updated backgroundTaskManager.js to use improved processor
+  - Fixed Clear Filters button to reset single tag selection
+  - Enhanced BookCard component with cleaner layout
+
+### 2026-03-02 - Phase 9 - Reading Progress & PDF Viewer
+
+- ✅ **Integrated PDF Viewer**: Built-in PDF reading experience
+  - Implemented PDFViewer component with react-pdf library
+  - Added pdfjs-dist worker for PDF rendering
+  - Page navigation with next/previous controls
+  - Zoom controls with +/- and fit buttons
+  - Default 170% zoom for optimal readability
+  - Auto-fit mode for responsive scaling
+  - Solved PDF.js worker loading issues
+  - Full-screen reading experience within the app
+- ✅ **Automatic Reading Progress Tracking**:
+  - Created reading_progress table with extended fields
+  - Auto-save current page with debounced updates (500ms)
+  - Progress percentage calculation and display
+  - Reading status management (not_started, reading, completed, paused)
+  - Last read timestamp tracking
+  - Started reading date tracking
+  - API endpoints for progress CRUD operations
+  - Visual progress indicators on book cards
+  - Progress bar showing reading percentage
+- ✅ **Currently Reading Collection**:
+  - Special collection for books being actively read
+  - Automatic filtering of books with reading status
+  - Integration with collection sidebar
+  - Real-time updates when starting/stopping reading
+- ✅ **Collection Management Enhancements**:
+  - Add/remove books from collections in BookDetailModal
+  - Visual collection toggles with checkmarks
+  - Collection refresh without page reload
+  - Fixed collection refresh for both Want to Read and Favorites
+- 📝 **Known Issues**:
+  - Thumbnail preservation issue when adding to collections (documented)
+  - Attempted multiple fixes for thumbnail path handling
+  - Created TODO-thumbnail-issue.md for future resolution
 
 ### 2026-03-01 - Phase 8 Complete - Full-Text Search & OCR
 
@@ -796,4 +911,4 @@ Bibliotheka/
 
 ---
 
-*This is a living document. Last major update: Phase 8 completion with full-text search and OCR.*
+*This is a living document. Last major update: Phase 9 - Reading Progress & Integrated PDF Viewer implementation.*

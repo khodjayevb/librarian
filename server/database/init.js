@@ -243,6 +243,33 @@ const runMigrations = () => {
     db.exec('ALTER TABLE books ADD COLUMN ocr_processed_at DATETIME');
     console.log('✅ Added ocr_processed_at column to books table');
   }
+
+  // Add reading progress enhancement columns
+  const progressColumns = db.prepare("PRAGMA table_info(reading_progress)").all();
+  const hasStartedReading = progressColumns.some(col => col.name === 'started_reading');
+  const hasFinishedReading = progressColumns.some(col => col.name === 'finished_reading');
+  const hasPercentage = progressColumns.some(col => col.name === 'percentage');
+  const hasReadingTime = progressColumns.some(col => col.name === 'reading_time_minutes');
+
+  if (!hasStartedReading) {
+    db.exec('ALTER TABLE reading_progress ADD COLUMN started_reading DATETIME');
+    console.log('✅ Added started_reading column to reading_progress table');
+  }
+
+  if (!hasFinishedReading) {
+    db.exec('ALTER TABLE reading_progress ADD COLUMN finished_reading DATETIME');
+    console.log('✅ Added finished_reading column to reading_progress table');
+  }
+
+  if (!hasPercentage) {
+    db.exec('ALTER TABLE reading_progress ADD COLUMN percentage REAL DEFAULT 0');
+    console.log('✅ Added percentage column to reading_progress table');
+  }
+
+  if (!hasReadingTime) {
+    db.exec('ALTER TABLE reading_progress ADD COLUMN reading_time_minutes INTEGER DEFAULT 0');
+    console.log('✅ Added reading_time_minutes column to reading_progress table');
+  }
 };
 
 // Initialize tables

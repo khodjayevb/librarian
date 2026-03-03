@@ -361,13 +361,30 @@ router.post('/', (req, res) => {
 // Update book metadata
 router.put('/:id', (req, res) => {
   try {
-    const { title, author, language, publication_year, isbn, publisher, edition, description, tags, categories } = req.body;
+    const { title, author, language, publication_year, isbn, publisher, edition, description, tags, categories, thumbnail_path } = req.body;
 
-    db.prepare(`
-      UPDATE books
-      SET title = ?, author = ?, language = ?, publication_year = ?, isbn = ?, publisher = ?, edition = ?, description = ?, last_modified = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(title, author, language, publication_year, isbn, publisher, edition, description, req.params.id);
+    // Build UPDATE query dynamically to only update provided fields
+    const updateFields = [];
+    const values = [];
+
+    if (title !== undefined) { updateFields.push('title = ?'); values.push(title); }
+    if (author !== undefined) { updateFields.push('author = ?'); values.push(author); }
+    if (language !== undefined) { updateFields.push('language = ?'); values.push(language); }
+    if (publication_year !== undefined) { updateFields.push('publication_year = ?'); values.push(publication_year); }
+    if (isbn !== undefined) { updateFields.push('isbn = ?'); values.push(isbn); }
+    if (publisher !== undefined) { updateFields.push('publisher = ?'); values.push(publisher); }
+    if (edition !== undefined) { updateFields.push('edition = ?'); values.push(edition); }
+    if (description !== undefined) { updateFields.push('description = ?'); values.push(description); }
+    if (thumbnail_path !== undefined) { updateFields.push('thumbnail_path = ?'); values.push(thumbnail_path); }
+
+    // Always update last_modified
+    updateFields.push('last_modified = CURRENT_TIMESTAMP');
+
+    if (updateFields.length > 1) { // More than just last_modified
+      const query = `UPDATE books SET ${updateFields.join(', ')} WHERE id = ?`;
+      values.push(req.params.id);
+      db.prepare(query).run(...values);
+    }
 
     // Update tags if provided
     if (tags !== undefined) {
@@ -391,7 +408,9 @@ router.put('/:id', (req, res) => {
       }
     }
 
-    res.json({ message: 'Book updated successfully' });
+    // Return the updated book
+    const updatedBook = db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id);
+    res.json(updatedBook);
   } catch (error) {
     console.error('Error updating book:', error);
     res.status(500).json({ error: 'Failed to update book' });
@@ -430,6 +449,26 @@ router.delete('/:id', (req, res) => {
   } catch (error) {
     console.error('Error deleting book:', error);
     res.status(500).json({ error: 'Failed to delete book' });
+  }
+});
+
+// Get collections for a book
+router.get('/:id/collections', (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const collections = db.prepare(`
+      SELECT c.id, c.name, c.icon, c.color
+      FROM collections c
+      JOIN book_collections cb ON c.id = cb.collection_id
+      WHERE cb.book_id = ?
+      ORDER BY c.name
+    `).all(id);
+
+    res.json({ collections });
+  } catch (error) {
+    console.error('Error fetching book collections:', error);
+    res.status(500).json({ error: 'Failed to fetch book collections' });
   }
 });
 
