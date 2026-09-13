@@ -37,8 +37,12 @@ Setup:
 
 ```bash
 brew install ollama && ollama serve
-ollama pull gemma3:4b
+ollama pull qwen3.6:35b-a3b   # summaries, Ask, compare, tagging (~24GB RAM)
+ollama pull gemma3:4b         # cheap first pass of the adult-content check
 ```
+
+On a machine that cannot hold the larger model, set `OLLAMA_MODEL=gemma3:4b`
+in `.env`; everything works, with shorter, less precise answers.
 
 Without Ollama the app still runs; AI features report that it is unavailable
 and tagging falls back to keyword matching.

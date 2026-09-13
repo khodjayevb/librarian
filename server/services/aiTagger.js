@@ -26,7 +26,9 @@ const SCHEMA = {
 };
 
 // Hiding a book is a visible mistake, so a flag needs two models to agree.
-const ADULT_MODEL = process.env.OLLAMA_MODEL || 'gemma3:4b';
+// The first pass is deliberately the cheap model, whatever OLLAMA_MODEL is:
+// it runs over every book, and only its yeses wake the bigger one.
+const ADULT_MODEL = process.env.OLLAMA_ADULT_MODEL || 'gemma3:4b';
 const ADULT_VERIFY_MODEL = process.env.OLLAMA_VERIFY_MODEL || 'qwen3.6:35b-a3b';
 
 // The small model's answer for a few hundred books never lands on the

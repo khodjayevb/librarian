@@ -13,9 +13,10 @@ const ollama = require('./ollamaClient');
 const quality = require('./metadataQuality');
 
 const PRIMARY_MODEL = process.env.OLLAMA_MODEL || 'gemma3:4b';
-// A different model checks the segmentation. Any second model does; this one
-// is a mixture-of-experts, so it is quick despite its size.
-const SECOND_OPINION = process.env.OLLAMA_VERIFY_MODEL || 'qwen3.6:35b-a3b';
+// A different model checks the segmentation. Any second model does, so it
+// is whichever of the two installed ones is not already the primary.
+const SECOND_OPINION = process.env.OLLAMA_SECOND_OPINION_MODEL ||
+  ['qwen3.6:35b-a3b', 'gemma3:4b'].find((m) => m !== PRIMARY_MODEL);
 
 const TITLE_SCHEMA = {
   type: 'object',
