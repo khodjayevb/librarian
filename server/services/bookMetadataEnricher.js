@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { db } = require('../database/init');
+const quality = require('./metadataQuality');
 
 class BookMetadataEnricher {
   constructor() {
@@ -33,15 +34,21 @@ class BookMetadataEnricher {
         console.log(`  Trying ${source.name}...`);
 
         let metadata = null;
+        let matchedByISBN = false;
 
         // Try ISBN first (most accurate)
         if (book.isbn) {
           metadata = await source.fetchByISBN(book.isbn);
+          matchedByISBN = Boolean(metadata);
         }
 
         // Fallback to title + author search
         if (!metadata && book.title && book.author) {
           metadata = await source.searchByTitleAuthor(book.title, book.author);
+        }
+
+        if (metadata) {
+          metadata.matchedByISBN = matchedByISBN;
         }
 
         if (metadata && this.isValidMetadata(metadata)) {
@@ -98,6 +105,8 @@ class BookMetadataEnricher {
   isValidMetadata(metadata) {
     // Check if metadata has useful information
     return metadata && (
+      metadata.title ||
+      metadata.authors ||
       metadata.description ||
       metadata.pageCount ||
       metadata.categories ||
@@ -108,11 +117,52 @@ class BookMetadataEnricher {
   }
 
   updateBookMetadata(bookId, metadata) {
+    const book = this.getBookById(bookId);
+
+    // Title and author are the two fields the extractor gets wrong most often,
+    // so a trustworthy remote value replaces a local one that fails the quality
+    // check. A good local value is never overwritten, and a title/author search
+    // match is not trusted for this — only an ISBN match identifies the book.
+    const trusted = Boolean(metadata.matchedByISBN);
+
+    const remoteTitle = quality.cleanTitle(metadata.title);
+    const useTitle =
+      trusted && remoteTitle && quality.isPlausibleTitle(remoteTitle) &&
+      !quality.isPlausibleTitle(book?.title)
+        ? remoteTitle
+        : null;
+
+    const remoteAuthor = quality.cleanAuthor(metadata.authors, {
+      title: remoteTitle || book?.title
+    });
+    const useAuthor =
+      trusted && remoteAuthor &&
+      !quality.isPlausibleAuthor(book?.author, { title: book?.title })
+        ? remoteAuthor
+        : null;
+
+    // Same rule for the fields that also come off the copyright page: take the
+    // remote value when what we hold is missing or fails the quality check.
+    // Testing for empty was not enough, because boilerplate is not empty.
+    const remotePublisher = quality.cleanPublisher(metadata.publisher);
+    const usePublisher =
+      remotePublisher && !quality.isPlausiblePublisher(book?.publisher)
+        ? remotePublisher
+        : null;
+
+    const remoteDescription = quality.cleanDescription(metadata.description);
+    const useDescription =
+      remoteDescription && !quality.isPlausibleDescription(book?.description)
+        ? remoteDescription
+        : null;
+
     const stmt = db.prepare(`
       UPDATE books
       SET
-        description = CASE WHEN ? IS NOT NULL AND (description IS NULL OR description = '') THEN ? ELSE description END,
-        publisher = CASE WHEN ? IS NOT NULL AND (publisher IS NULL OR publisher = '') THEN ? ELSE publisher END,
+        title = COALESCE(?, title),
+        author = COALESCE(?, author),
+        description = COALESCE(?, description),
+        publisher = COALESCE(?, publisher),
         publication_year = CASE WHEN ? IS NOT NULL AND publication_year IS NULL THEN ? ELSE publication_year END,
         page_count = CASE WHEN ? IS NOT NULL AND (page_count IS NULL OR page_count = 0) THEN ? ELSE page_count END,
         language = CASE WHEN ? IS NOT NULL AND (language IS NULL OR language = '') THEN ? ELSE language END,
@@ -125,8 +175,10 @@ class BookMetadataEnricher {
     `);
 
     const result = stmt.run(
-      metadata.description, metadata.description,
-      metadata.publisher, metadata.publisher,
+      useTitle,
+      useAuthor,
+      useDescription,
+      usePublisher,
       metadata.publicationYear, metadata.publicationYear,
       metadata.pageCount, metadata.pageCount,
       metadata.language, metadata.language,
@@ -255,11 +307,32 @@ class GoogleBooksAPI {
   constructor() {
     this.name = 'Google Books';
     this.baseUrl = 'https://www.googleapis.com/books/v1';
-    // Note: In production, store this in environment variable
     this.apiKey = process.env.GOOGLE_BOOKS_API_KEY || null;
+
+    // Unauthenticated requests are rate limited per IP and, once the limit is
+    // hit, every subsequent call returns 429. Retrying each book costs a round
+    // trip and returns nothing, so stand down for the rest of the run after a
+    // few refusals. Set GOOGLE_BOOKS_API_KEY to raise the limit.
+    this.consecutive429s = 0;
+    this.disabled = false;
+  }
+
+  noteFailure(error) {
+    if (error.response?.status !== 429) return;
+
+    this.consecutive429s++;
+    if (this.consecutive429s >= 3 && !this.disabled) {
+      this.disabled = true;
+      console.warn(
+        '  ⚠️  Google Books is rate limiting this address; skipping it for the ' +
+        'rest of this run. Set GOOGLE_BOOKS_API_KEY to raise the quota.'
+      );
+    }
   }
 
   async fetchByISBN(isbn) {
+    if (this.disabled) return null;
+
     try {
       const cleanISBN = isbn.replace(/[^0-9X]/gi, '');
 
@@ -275,9 +348,10 @@ class GoogleBooksAPI {
       }
 
       const book = response.data.items[0].volumeInfo;
+      this.consecutive429s = 0;
 
       return {
-        title: book.title,
+        title: book.subtitle ? `${book.title}: ${book.subtitle}` : book.title,
         authors: book.authors ? book.authors.join(', ') : null,
         publisher: book.publisher,
         publicationYear: book.publishedDate ? this.extractYear(book.publishedDate) : null,
@@ -291,12 +365,15 @@ class GoogleBooksAPI {
         source: 'Google Books',
       };
     } catch (error) {
-      console.error('Google Books API error:', error.message);
+      this.noteFailure(error);
+      if (!this.disabled) console.error('Google Books API error:', error.message);
       return null;
     }
   }
 
   async searchByTitleAuthor(title, author) {
+    if (this.disabled) return null;
+
     try {
       const query = `intitle:${title}+inauthor:${author}`.replace(/\s+/g, '+');
 

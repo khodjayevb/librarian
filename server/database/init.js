@@ -2,14 +2,33 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
-// Determine database path
-const dbPath = path.join(__dirname, '../../data');
-if (!fs.existsSync(dbPath)) {
-  fs.mkdirSync(dbPath, { recursive: true });
-}
+/**
+ * Which database file to open.
+ *
+ * DATABASE_PATH was documented in .env.example but nothing read it — the path
+ * was hardcoded, so there was no way to point the app at a copy. Anything that
+ * might destroy data had to be tried against the real library.
+ *
+ * Relative paths resolve from the project root, so DATABASE_PATH=./data/test.db
+ * means what it looks like from the command line.
+ */
+const DEFAULT_DB = path.join(__dirname, '../../data/librarian.db');
+const dbFile = process.env.DATABASE_PATH
+  ? path.resolve(__dirname, '../..', process.env.DATABASE_PATH)
+  : DEFAULT_DB;
+
+fs.mkdirSync(path.dirname(dbFile), { recursive: true });
+
+const isDefault = path.resolve(dbFile) === path.resolve(DEFAULT_DB);
+
+// Always say which file is open. Working on the wrong database is the kind of
+// mistake that is only obvious afterwards.
+console.log(isDefault
+  ? `📚 Library database: ${dbFile}`
+  : `🧪 Library database: ${dbFile}  (not the default — set by DATABASE_PATH)`);
 
 // Initialize database
-const db = new Database(path.join(dbPath, 'librarian.db'));
+const db = new Database(dbFile);
 db.pragma('journal_mode = WAL'); // Better performance for concurrent access
 
 // Create tables
@@ -94,6 +113,42 @@ const createTables = () => {
       current_page INTEGER,
       total_pages INTEGER,
       last_read DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+    )
+  `);
+
+  // User preferences
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      hide_adult_content INTEGER DEFAULT 0,
+      default_view_mode TEXT DEFAULT 'grid' CHECK(default_view_mode IN ('grid', 'list')),
+      default_sort_by TEXT DEFAULT 'date_added',
+      default_sort_order TEXT DEFAULT 'desc' CHECK(default_sort_order IN ('asc', 'desc')),
+      books_per_page INTEGER DEFAULT 50,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Initialize default preferences if not exists
+  db.exec(`
+    INSERT OR IGNORE INTO user_preferences (id, hide_adult_content, default_view_mode)
+    VALUES (1, 0, 'grid')
+  `);
+
+  // OCR Queue table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ocr_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      book_id INTEGER NOT NULL UNIQUE,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'completed', 'failed')),
+      priority INTEGER DEFAULT 0,
+      attempts INTEGER DEFAULT 0,
+      error_message TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      started_at DATETIME,
+      completed_at DATETIME,
       FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
     )
   `);
@@ -244,6 +299,23 @@ const runMigrations = () => {
     console.log('✅ Added ocr_processed_at column to books table');
   }
 
+  // Add OCR status column
+  const hasOcrStatus = columns.some(col => col.name === 'ocr_status');
+  if (!hasOcrStatus) {
+    // Single quotes: SQLite accepts double-quoted string literals when writing
+    // the schema but rejects them when VACUUM re-parses it, which left the
+    // database unable to be vacuumed or copied with VACUUM INTO.
+    db.exec("ALTER TABLE books ADD COLUMN ocr_status TEXT DEFAULT 'not_needed' CHECK(ocr_status IN ('not_needed', 'pending', 'processing', 'completed', 'failed'))");
+    console.log('✅ Added ocr_status column to books table');
+  }
+
+  // Add OCR error column
+  const hasOcrError = columns.some(col => col.name === 'ocr_error');
+  if (!hasOcrError) {
+    db.exec('ALTER TABLE books ADD COLUMN ocr_error TEXT');
+    console.log('✅ Added ocr_error column to books table');
+  }
+
   // Add reading progress enhancement columns
   const progressColumns = db.prepare("PRAGMA table_info(reading_progress)").all();
   const hasStartedReading = progressColumns.some(col => col.name === 'started_reading');
@@ -269,6 +341,23 @@ const runMigrations = () => {
   if (!hasReadingTime) {
     db.exec('ALTER TABLE reading_progress ADD COLUMN reading_time_minutes INTEGER DEFAULT 0');
     console.log('✅ Added reading_time_minutes column to reading_progress table');
+  }
+
+  // Add adult content flag column
+  const hasIsAdult = columns.some(col => col.name === 'is_adult');
+  if (!hasIsAdult) {
+    db.exec('ALTER TABLE books ADD COLUMN is_adult INTEGER DEFAULT 0');
+    console.log('✅ Added is_adult column to books table');
+  }
+
+  // Records that a book has been assessed for adult content, separately from
+  // the answer. Without it every restart would re-ask the model about the
+  // whole library, and a book judged "not adult" is indistinguishable from one
+  // never looked at.
+  const hasAdultChecked = columns.some(col => col.name === 'adult_checked');
+  if (!hasAdultChecked) {
+    db.exec('ALTER TABLE books ADD COLUMN adult_checked INTEGER DEFAULT 0');
+    console.log('✅ Added adult_checked column to books table');
   }
 };
 
@@ -317,8 +406,57 @@ const getStats = () => {
 };
 
 // Export database instance and helper functions
+// Helper functions for database operations
+const getBookById = (id) => {
+  const stmt = db.prepare('SELECT * FROM books WHERE id = ?');
+  return stmt.get(id);
+};
+
+const getAllBooks = () => {
+  const stmt = db.prepare('SELECT * FROM books ORDER BY date_added DESC');
+  return stmt.all();
+};
+
+const getBookTags = (bookId) => {
+  const stmt = db.prepare(`
+    SELECT t.* FROM tags t
+    JOIN book_tags bt ON t.id = bt.tag_id
+    WHERE bt.book_id = ?
+  `);
+  return stmt.all(bookId);
+};
+
+const addTagToBook = (bookId, tagId) => {
+  const stmt = db.prepare('INSERT INTO book_tags (book_id, tag_id) VALUES (?, ?)');
+  return stmt.run(bookId, tagId);
+};
+
+const updateBook = (id, updates) => {
+  const fields = Object.keys(updates);
+  const values = Object.values(updates);
+
+  if (fields.length === 0) return;
+
+  const setClause = fields.map(field => `${field} = ?`).join(', ');
+  const stmt = db.prepare(`UPDATE books SET ${setClause} WHERE id = ?`);
+  return stmt.run(...values, id);
+};
+
+const deleteBook = (id) => {
+  const stmt = db.prepare('DELETE FROM books WHERE id = ?');
+  return stmt.run(id);
+};
+
 module.exports = {
   db,
+  dbFile,
+  isDefaultDatabase: isDefault,
   getStats,
-  close: () => db.close()
+  close: () => db.close(),
+  getBookById,
+  getAllBooks,
+  getBookTags,
+  addTagToBook,
+  updateBook,
+  deleteBook
 };

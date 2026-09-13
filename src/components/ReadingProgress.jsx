@@ -1,17 +1,26 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import StatusNote, { useStatus } from './StatusNote';
 
 function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
-  const [progress, setProgress] = useState(null);
+  const [progress, setProgress] = useState(book?.readingProgress || null);
+  const notice = useStatus();
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [currentPage, setCurrentPage] = useState(0);
+  const [currentPage, setCurrentPage] = useState(book?.readingProgress?.current_page || 0);
 
-  // Fetch progress on mount or when book changes
+  // The book listing carries progress with it, so a grid of cards costs no
+  // extra requests. Only fetch when it was not supplied.
   useEffect(() => {
-    if (book?.id) {
-      fetchProgress();
+    if (!book?.id) return;
+
+    if (book.readingProgress) {
+      setProgress(book.readingProgress);
+      setCurrentPage(book.readingProgress.current_page || 0);
+      return;
     }
-  }, [book?.id]);
+
+    fetchProgress();
+  }, [book?.id, book?.readingProgress]);
 
   const fetchProgress = async () => {
     try {
@@ -42,6 +51,8 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
         setCurrentPage(data.current_page);
         setEditing(false);
         if (onUpdate) onUpdate(data);
+      } else {
+        notice.error('Could not save your place');
       }
     } catch (error) {
       console.error('Error updating progress:', error);
@@ -58,9 +69,12 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
 
       if (response.ok) {
         fetchProgress();
+      } else {
+        notice.error('Could not mark this as started');
       }
     } catch (error) {
       console.error('Error marking as started:', error);
+      notice.error('Could not reach the server');
     }
   };
 
@@ -72,9 +86,12 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
 
       if (response.ok) {
         fetchProgress();
+      } else {
+        notice.error('Could not mark this as finished');
       }
     } catch (error) {
       console.error('Error marking as finished:', error);
+      notice.error('Could not reach the server');
     }
   };
 
@@ -96,21 +113,21 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
     return (
       <div className={`relative ${className}`}>
         <div className="flex items-center gap-2">
-          <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+          <div className="flex-1 bg-surface-sunken rounded-full h-2 overflow-hidden">
             <div
               className={`h-full transition-all duration-300 ${
-                percentage === 100 ? 'bg-green-500' :
-                percentage > 0 ? 'bg-blue-500' : 'bg-gray-400'
+                percentage === 100 ? 'bg-emerald-500' :
+                percentage > 0 ? 'bg-accent' : 'bg-ink-faint'
               }`}
               style={{ width: `${percentage}%` }}
             />
           </div>
-          <span className="text-xs text-gray-600 dark:text-gray-400">
+          <span className="text-xs text-ink-muted">
             {Math.round(percentage)}%
           </span>
         </div>
         {progress?.current_page > 0 && (
-          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          <div className="text-xs text-ink-faint mt-1">
             Page {progress.current_page} of {totalPages}
           </div>
         )}
@@ -120,16 +137,17 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
 
   // Full view for book detail modal
   return (
-    <div className={`bg-white dark:bg-gray-800 rounded-lg p-4 ${className}`}>
+    <div className={`rounded-lg bg-surface ring-1 ring-hairline p-4 ${className}`}>
+      <StatusNote status={notice.status} onDismiss={notice.clear} className="mb-2" />
       <div className="flex justify-between items-start mb-3">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+        <h3 className="text-lg font-semibold text-ink">
           Reading Progress
         </h3>
         <div className="flex gap-2">
           {readingStatus === 'not_started' && (
             <button
               onClick={markAsStarted}
-              className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+              className="px-3 py-1 text-sm bg-accent text-white rounded hover:bg-accent-hover"
             >
               Start Reading
             </button>
@@ -138,13 +156,13 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
             <>
               <button
                 onClick={() => setEditing(true)}
-                className="px-3 py-1 text-sm bg-gray-500 text-white rounded hover:bg-gray-600"
+                className="px-3 py-1 rounded border border-hairline text-sm text-ink-muted hover:bg-surface-hover hover:text-ink"
               >
                 Update
               </button>
               <button
                 onClick={markAsFinished}
-                className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
+                className="px-3 py-1 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700"
               >
                 Mark as Finished
               </button>
@@ -155,17 +173,17 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
 
       {/* Progress Bar */}
       <div className="mb-4">
-        <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400 mb-2">
+        <div className="flex justify-between text-sm text-ink-muted mb-2">
           <span>
             {progress?.current_page || 0} / {totalPages} pages
           </span>
           <span>{Math.round(percentage)}%</span>
         </div>
-        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
+        <div className="w-full bg-surface-sunken rounded-full h-3 overflow-hidden">
           <div
             className={`h-full transition-all duration-300 ${
-              percentage === 100 ? 'bg-green-500' :
-              percentage > 0 ? 'bg-blue-500' : 'bg-gray-400'
+              percentage === 100 ? 'bg-emerald-500' :
+              percentage > 0 ? 'bg-accent' : 'bg-ink-faint'
             }`}
             style={{ width: `${percentage}%` }}
           />
@@ -175,17 +193,17 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
       {/* Status badges */}
       <div className="flex gap-2 mb-3">
         {readingStatus === 'finished' && (
-          <span className="px-2 py-1 bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100 text-xs rounded">
+          <span className="px-2 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:bg-green-800 dark:text-green-100 text-xs rounded">
             Finished
           </span>
         )}
         {readingStatus === 'reading' && (
-          <span className="px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100 text-xs rounded">
+          <span className="px-2 py-1 bg-accent-soft text-accent-ink dark:bg-blue-800 dark:text-accent-ink text-xs rounded">
             Currently Reading
           </span>
         )}
         {progress?.last_read && (
-          <span className="px-2 py-1 bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 text-xs rounded">
+          <span className="px-2 py-1 bg-surface-sunken text-ink-muted text-xs rounded">
             Last read: {new Date(progress.last_read).toLocaleDateString()}
           </span>
         )}
@@ -200,15 +218,14 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
             onChange={(e) => setCurrentPage(e.target.value)}
             min="0"
             max={totalPages}
-            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded
-                     bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+            className="flex-1 px-3 py-2 border border-hairline rounded bg-surface text-ink"
             placeholder="Current page"
             autoFocus
           />
           <button
             type="submit"
             disabled={loading}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+            className="px-4 py-2 bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50"
           >
             {loading ? 'Saving...' : 'Save'}
           </button>
@@ -218,7 +235,7 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
               setEditing(false);
               setCurrentPage(progress?.current_page || 0);
             }}
-            className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+            className="px-4 py-2 rounded border border-hairline text-ink-muted hover:bg-surface-hover hover:text-ink"
           >
             Cancel
           </button>
@@ -227,7 +244,7 @@ function ReadingProgress({ book, className = '', compact = false, onUpdate }) {
 
       {/* Reading dates */}
       {(progress?.started_reading || progress?.finished_reading) && (
-        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-400">
+        <div className="mt-3 pt-3 border-t border-hairline text-sm text-ink-muted">
           {progress.started_reading && (
             <div>Started: {new Date(progress.started_reading).toLocaleDateString()}</div>
           )}

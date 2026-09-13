@@ -3,9 +3,14 @@ const path = require('path');
 const sharp = require('sharp');
 const { fromPath } = require('pdf2pic');
 
+// Ghostscript can sit on a pathological PDF indefinitely, and the caller's
+// batch waits on every promise in it.
+const CONVERT_TIMEOUT_MS = Number(process.env.THUMBNAIL_TIMEOUT_MS) || 120000;
+
 class ThumbnailGeneratorPdf2pic {
   constructor() {
     this.thumbnailsDir = path.join(process.cwd(), 'public', 'thumbnails');
+    this.jobSequence = 0;
     this.initializeThumbnailsDir();
   }
 
@@ -22,12 +27,29 @@ class ThumbnailGeneratorPdf2pic {
    */
   async generateThumbnail(pdfPath, bookId) {
     try {
+      // pdf2pic opens a ReadStream internally and its 'error' event has no
+      // listener, so a missing file crashes the process instead of rejecting.
+      // Check first rather than letting it get that far.
+      try {
+        await fs.access(pdfPath);
+      } catch {
+        console.error(`Skipping thumbnail for book ${bookId}: file not found at ${pdfPath}`);
+        return { success: false, missing: true, error: 'File not found' };
+      }
+
       console.log(`Generating PDF thumbnail for book ${bookId}...`);
+
+      // The temp name must be unique per job, not per book. pdf2pic stats
+      // its output file from inside a raw callback, so if two jobs for the
+      // same book overlap — the watcher's processing and the periodic sweep,
+      // or two server processes — the first to finish deletes the file and
+      // the second's stat throws an uncaught exception that kills the server.
+      const tempName = `temp_book_${bookId}_${process.pid}_${++this.jobSequence}`;
 
       // Configure pdf2pic
       const options = {
         density: 100,       // DPI for the conversion
-        saveFilename: `temp_book_${bookId}`,
+        saveFilename: tempName,
         savePath: this.thumbnailsDir,
         format: 'png',
         width: 600,        // Larger initial size for better quality
@@ -37,7 +59,7 @@ class ThumbnailGeneratorPdf2pic {
       const converter = fromPath(pdfPath, options);
 
       // Convert the first page to PNG
-      const result = await converter(1);  // Page 1
+      const result = await this.withTimeout(converter(1), pdfPath);
 
       if (result && result.path) {
         // Now resize and convert to JPEG using sharp
@@ -65,6 +87,7 @@ class ThumbnailGeneratorPdf2pic {
         return {
           success: true,
           thumbnail: finalThumbnail,
+          thumbnailPath,
           path: thumbnailPath
         };
       } else {
@@ -101,6 +124,7 @@ class ThumbnailGeneratorPdf2pic {
         return {
           success: true,
           thumbnail: `/thumbnails/book_${bookId}.jpg`,
+          thumbnailPath,
           path: thumbnailPath,
           isPlaceholder: true
         };
@@ -112,6 +136,16 @@ class ThumbnailGeneratorPdf2pic {
         };
       }
     }
+  }
+
+  withTimeout(promise, pdfPath) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Ghostscript took longer than ${CONVERT_TIMEOUT_MS / 1000}s on ${path.basename(pdfPath)}`));
+      }, CONVERT_TIMEOUT_MS);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
   }
 
   async thumbnailExists(bookId) {

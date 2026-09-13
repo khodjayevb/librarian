@@ -1,14 +1,63 @@
 import React, { useState, useEffect } from 'react';
 import BookDetailModal from './components/BookDetailModal';
 import BookCard from './components/BookCard';
+import FilterSelect from './components/FilterSelect';
+import StatusNote, { useStatus } from './components/StatusNote';
 import BulkActionsModal from './components/BulkActionsModal';
 import CollectionsSidebar from './components/CollectionsSidebar';
 import FullTextSearch from './components/FullTextSearch';
+import CrossBookCompare from './components/CrossBookCompare';
 import ReadingProgress from './components/ReadingProgress';
 import ReadingStatsDashboard from './components/ReadingStatsDashboard';
 import PDFViewer from './components/PDFViewer';
 import EpubViewer from './components/EpubViewer';
+import DuplicateManager from './components/DuplicateManager';
+import PreferencesModal from './components/PreferencesModal';
 import useDarkMode from './hooks/useDarkMode';
+
+const PAGE_SIZE = 60;
+
+// The whole library is fetched in one go because filtering, sorting and the
+// filter dropdowns all work across the full set in the browser; a page of
+// results would give wrong facets and a wrong sort order. The listing is
+// lightweight (about 1KB per book) and only PAGE_SIZE cards are rendered at a
+// time, so the cost is the transfer, not the DOM.
+const LIBRARY_FETCH_LIMIT = 100000;
+
+const SEEN_KEY = 'librarian:booksSeenAt';
+
+// Filter value for "has no tags at all". Not a real tag — storing one would
+// make the book tagged, and it would show up as a subject everywhere else.
+const UNTAGGED = '__untagged__';
+
+// Books added within this window are worth pointing out on the card.
+const NEW_BOOK_DAYS = 3;
+
+const startOfDay = (value) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? null
+    : new Date(date.getFullYear(), date.getMonth(), date.getDate());
+};
+
+/** "Today", "Yesterday", then a written date. */
+function dayLabel(value) {
+  const day = startOfDay(value);
+  if (!day) return 'Date unknown';
+
+  const today = startOfDay(new Date());
+  const days = Math.round((today - day) / 86400000);
+
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+
+  return day.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'long',
+    year: day.getFullYear() === today.getFullYear() ? undefined : 'numeric'
+  });
+}
 
 function App() {
   const { isDark, toggleDarkMode } = useDarkMode();
@@ -29,6 +78,7 @@ function App() {
 
   // Full-text search state
   const [showFullTextSearch, setShowFullTextSearch] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
 
   // Reading stats state
   const [showReadingStats, setShowReadingStats] = useState(false);
@@ -43,10 +93,48 @@ function App() {
 
   const [collectionsRefreshKey, setCollectionsRefreshKey] = useState(0);
 
+  // Preferences modal state
+  const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
+
+  // Number of cards actually rendered. Mounting the whole library at once
+  // meant hundreds of cards and images before anything appeared; render a
+  // screenful and extend as the sentinel below the grid scrolls into view.
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [totalBooks, setTotalBooks] = useState(0);
+  const appStatus = useStatus();
+
+  // Constraints an interpreted question adds that the filter bar has no
+  // control for. Kept separate so the visible controls still say what they
+  // say, and one "clear" puts everything back.
+  const [askConstraints, setAskConstraints] = useState(null);
+  const [asking, setAsking] = useState(false);
+
+  // When the library was last looked at, so "Recently Added" can say how many
+  // books have arrived since. Per-viewer and cosmetic, so localStorage rather
+  // than a column on the database.
+  const [booksSeenAt, setBooksSeenAt] = useState(() => {
+    try {
+      return localStorage.getItem(SEEN_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
+  const loadMoreRef = React.useRef(null);
+
+  // User preferences state
+  const [userPreferences, setUserPreferences] = useState({
+    hide_adult_content: false,
+    default_view_mode: 'grid',
+    default_sort_by: 'date_added',
+    default_sort_order: 'desc',
+    books_per_page: 50
+  });
+
   // Advanced filtering states
   const [selectedTag, setSelectedTag] = useState('');
   const [selectedAuthor, setSelectedAuthor] = useState('');
   const [selectedFileType, setSelectedFileType] = useState('');
+  const [selectedLanguage, setSelectedLanguage] = useState('');
   const [sortBy, setSortBy] = useState('title'); // title, date_added, file_size
   const [sortOrder, setSortOrder] = useState('asc'); // asc, desc
 
@@ -89,12 +177,34 @@ function App() {
   const handleReadPDF = handleReadBook;
 
   // Extract unique values for filters
-  const allTags = [...new Set(books.flatMap(book => book.tags || []))];
+  const tagCounts = React.useMemo(() => {
+    const counts = new Map();
+    for (const book of books) {
+      for (const tag of book.tags || []) {
+        counts.set(tag, (counts.get(tag) || 0) + 1);
+      }
+    }
+
+    // Ordered by name, not by count. Counts change under the user — the
+    // background tagger revises them whenever books are added — and reordering
+    // a <select>'s options while one is chosen moves the selection to whatever
+    // lands at that index. Alphabetical is stable and easy to scan; the count
+    // beside each tag still says how many books it will show.
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [books]);
+
+  const untaggedCount = React.useMemo(
+    () => books.filter((b) => !b.tags || b.tags.length === 0).length,
+    [books]
+  );
+
+  const allTags = React.useMemo(() => tagCounts.map(([tag]) => tag), [tagCounts]);
   const allAuthors = [...new Set(books.map(book => book.author).filter(Boolean))].sort();
   const allFileTypes = [...new Set(books.map(book => {
     const ext = book.file_path?.split('.').pop()?.toLowerCase();
     return ext;
   }).filter(Boolean))].sort();
+  const allLanguages = [...new Set(books.map(book => book.language).filter(Boolean))].sort();
 
   // Enhanced filtering and sorting
   const filteredAndSortedBooks = React.useMemo(() => {
@@ -107,7 +217,11 @@ function App() {
         (book.author || '').toLowerCase().includes(query);
 
       // Tag filter
-      const matchesTags = !selectedTag || book.tags?.includes(selectedTag);
+      const matchesTags =
+        !selectedTag ||
+        (selectedTag === UNTAGGED
+          ? !book.tags || book.tags.length === 0
+          : book.tags?.includes(selectedTag));
 
       // Author filter
       const matchesAuthor = !selectedAuthor ||
@@ -118,7 +232,35 @@ function App() {
       const matchesFileType = !selectedFileType ||
         bookFileType === selectedFileType;
 
-      return matchesSearch && matchesTags && matchesAuthor && matchesFileType;
+      // Language filter
+      const matchesLanguage = !selectedLanguage ||
+        book.language === selectedLanguage;
+
+      // Adult content filter
+      const matchesAdultFilter = !userPreferences.hide_adult_content ||
+        !book.is_adult || book.is_adult === 0;
+
+      // Extra constraints from an interpreted question.
+      let matchesAsk = true;
+      if (askConstraints) {
+        const { yearFrom, yearTo, addedWithinDays, tags: askTags } = askConstraints;
+        const year = book.publication_year;
+
+        if (yearFrom && (!year || year < yearFrom)) matchesAsk = false;
+        if (yearTo && (!year || year > yearTo)) matchesAsk = false;
+
+        if (addedWithinDays) {
+          const cutoff = Date.now() - addedWithinDays * 86400000;
+          if (!book.date_added || new Date(book.date_added).getTime() < cutoff) matchesAsk = false;
+        }
+
+        // More than one subject can be asked for; the bar holds only one.
+        if (askTags && askTags.length > 1) {
+          if (!askTags.every((t) => book.tags?.includes(t))) matchesAsk = false;
+        }
+      }
+
+      return matchesSearch && matchesTags && matchesAuthor && matchesFileType && matchesLanguage && matchesAdultFilter && matchesAsk;
     });
 
     // Apply sorting
@@ -145,14 +287,116 @@ function App() {
       return sortOrder === 'asc' ? compareValue : -compareValue;
     });
 
+    // Newest first is the whole point of this view, so it ignores the sort
+    // control rather than letting a stale "Title A-Z" hide what just arrived.
+    if (selectedCollection === 'recently-added') {
+      return [...filtered].sort(
+        (a, b) => new Date(b.date_added || 0) - new Date(a.date_added || 0)
+      );
+    }
+
     return filtered;
-  }, [books, searchQuery, selectedTag, selectedAuthor, selectedFileType, sortBy, sortOrder]);
+  }, [books, searchQuery, selectedTag, selectedAuthor, selectedFileType, selectedLanguage, sortBy, sortOrder, userPreferences, selectedCollection, askConstraints]);
+
+  const visibleBooks = React.useMemo(
+    () => filteredAndSortedBooks.slice(0, visibleCount),
+    [filteredAndSortedBooks, visibleCount]
+  );
+
+  const isRecentView = selectedCollection === 'recently-added';
+
+  // Books added since the library was last opened.
+  const unseenCount = React.useMemo(() => {
+    if (!booksSeenAt) return 0;
+    const since = new Date(booksSeenAt).getTime();
+    return books.filter((b) => b.date_added && new Date(b.date_added).getTime() > since).length;
+  }, [books, booksSeenAt]);
+
+  // In the recent view the grid is broken into days, so a daily habit of
+  // adding books reads as a timeline rather than one long undifferentiated
+  // run of covers. Grouping the already-sliced list keeps it compatible with
+  // the incremental rendering below.
+  const booksByDay = React.useMemo(() => {
+    if (!isRecentView) return null;
+
+    // How many books each day holds in total. Counted over the whole filtered
+    // list rather than the rendered slice, so a day still reads "375 books"
+    // when only the first 60 have been drawn.
+    const totals = new Map();
+    for (const book of filteredAndSortedBooks) {
+      const label = dayLabel(book.date_added);
+      totals.set(label, (totals.get(label) || 0) + 1);
+    }
+
+    const groups = [];
+    let current = null;
+
+    for (const book of visibleBooks) {
+      const label = dayLabel(book.date_added);
+      if (!current || current.label !== label) {
+        current = { label, books: [], total: totals.get(label) || 0 };
+        groups.push(current);
+      }
+      current.books.push(book);
+    }
+
+    return groups;
+  }, [isRecentView, visibleBooks, filteredAndSortedBooks]);
+
+  // Opening the view marks the library as seen, which clears the badge.
+  useEffect(() => {
+    if (!isRecentView) return;
+
+    const now = new Date().toISOString();
+    try {
+      localStorage.setItem(SEEN_KEY, now);
+    } catch {
+      // Private browsing or blocked storage: the badge simply stays put.
+    }
+    setBooksSeenAt(now);
+  }, [isRecentView, books.length]);
+
+  // A new filter or sort should start from the top again.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [searchQuery, selectedTag, selectedAuthor, selectedFileType, selectedLanguage, sortBy, sortOrder, selectedCollection]);
+
+  // Extend the rendered slice when the sentinel below the grid comes into view.
+  useEffect(() => {
+    const sentinel = loadMoreRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleCount((count) => count + PAGE_SIZE);
+        }
+      },
+      { rootMargin: '400px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [visibleBooks.length, filteredAndSortedBooks.length]);
+
+  // Fetch user preferences on mount
+  useEffect(() => {
+    const fetchPreferences = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/api/preferences');
+        const data = await response.json();
+        setUserPreferences(data);
+      } catch (error) {
+        console.error('Failed to fetch preferences:', error);
+      }
+    };
+
+    fetchPreferences();
+  }, []);
 
   useEffect(() => {
-    // Load books on mount
-    loadBooks();
-
-    // Set up auto-refresh to check for new books added by background tasks
+    // Auto-refresh to pick up books added by background tasks. The initial
+    // load is handled by the selectedCollection effect below.
     const refreshInterval = setInterval(() => {
       loadBooks();
     }, 30000); // Refresh every 30 seconds
@@ -230,6 +474,71 @@ function App() {
     }
   };
 
+  /**
+   * Read the search box as a question and set the filters it means. The
+   * filters stay visible in the bar afterwards, so the interpretation can be
+   * seen, adjusted or undone rather than being an opaque ranking.
+   */
+  const handleAsk = async () => {
+    const question = searchQuery.trim();
+    if (!question) return;
+
+    setAsking(true);
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/ai-tags/interpret?q=${encodeURIComponent(question)}`
+      );
+      if (!response.ok) {
+        appStatus.error('The local model is not available. Is Ollama running?');
+        return;
+      }
+
+      const { filters, unmatched } = await response.json();
+
+      setSelectedTag(filters.tags?.[0] || '');
+      setSelectedLanguage(filters.language || '');
+      setSelectedFileType(filters.fileType || '');
+      setSelectedAuthor(filters.author && allAuthors.includes(filters.author) ? filters.author : '');
+      if (filters.sortBy) setSortBy(filters.sortBy);
+      if (filters.sortOrder) setSortOrder(filters.sortOrder);
+
+      // The text box becomes the remaining free-text match, or clears when the
+      // question was fully expressed as filters.
+      setSearchQuery(filters.text || (filters.author && !allAuthors.includes(filters.author) ? filters.author : ''));
+
+      setAskConstraints({
+        tags: filters.tags || [],
+        yearFrom: filters.yearFrom,
+        yearTo: filters.yearTo,
+        addedWithinDays: filters.addedWithinDays
+      });
+
+      const applied = [
+        filters.tags?.length ? filters.tags.join(' + ') : null,
+        filters.language,
+        filters.fileType,
+        filters.author,
+        filters.yearFrom ? `from ${filters.yearFrom}` : null,
+        filters.yearTo ? `to ${filters.yearTo}` : null,
+        filters.addedWithinDays ? `added in the last ${filters.addedWithinDays} days` : null
+      ].filter(Boolean);
+
+      if (applied.length === 0 && !filters.text) {
+        appStatus.info(`Could not turn "${question}" into a filter — try naming a subject, author or year.`);
+      } else {
+        appStatus.info(
+          `Showing: ${applied.join(' · ') || filters.text}` +
+          (unmatched?.length ? `\nNot applied: ${unmatched.join(', ')}` : '')
+        );
+      }
+    } catch (error) {
+      console.error('Interpretation failed:', error);
+      appStatus.error('Could not reach the server to interpret that');
+    } finally {
+      setAsking(false);
+    }
+  };
+
   const handleProcessBooks = async () => {
     setLoading(true);
     try {
@@ -237,12 +546,16 @@ function App() {
         method: 'POST',
       });
       const data = await response.json();
-      console.log('Processing completed:', data);
-      alert(`Processed ${data.processed} books. ${data.errors} errors.`);
+      if (data.errors) {
+        appStatus.error(`Processed ${data.processed} book(s), ${data.errors} failed`);
+      } else {
+        appStatus.success(`Processed ${data.processed} book(s)`);
+      }
       // Reload books after processing
       await loadBooks();
     } catch (error) {
       console.error('Processing failed:', error);
+      appStatus.error('Could not reach the server to process books');
     } finally {
       setLoading(false);
     }
@@ -260,7 +573,7 @@ function App() {
         if (progressData.length > 0) {
           // Fetch full book details for the currently reading books
           const bookIds = progressData.map(item => item.id);
-          const booksResponse = await fetch('http://localhost:3001/api/books?limit=500');
+          const booksResponse = await fetch(`http://localhost:3001/api/books?limit=${LIBRARY_FETCH_LIMIT}`);
           const booksData = await booksResponse.json();
 
           // Filter to only currently reading books and merge with progress
@@ -288,6 +601,13 @@ function App() {
           setBooks([]);
           setCollectionBooks([]);
         }
+      } else if (selectedCollection === 'recently-added') {
+        // A view over the whole library rather than a stored collection.
+        const response = await fetch(`http://localhost:3001/api/books?limit=${LIBRARY_FETCH_LIMIT}`);
+        const data = await response.json();
+        setBooks(data.books || []);
+        setTotalBooks(data.pagination?.total ?? (data.books || []).length);
+        setCollectionBooks([]);
       } else if (selectedCollection) {
         // Regular collection
         const response = await fetch(`http://localhost:3001/api/collections/${selectedCollection}`);
@@ -297,10 +617,10 @@ function App() {
         setCollectionBooks(data.books || []);
       } else {
         // Load all books
-        const response = await fetch('http://localhost:3001/api/books?limit=500');
+        const response = await fetch(`http://localhost:3001/api/books?limit=${LIBRARY_FETCH_LIMIT}`);
         const data = await response.json();
-        console.log('Loaded books:', data);
         setBooks(data.books || []);
+        setTotalBooks(data.pagination?.total ?? (data.books || []).length);
         setCollectionBooks([]);
       }
     } catch (error) {
@@ -394,274 +714,22 @@ function App() {
 
       if (response.ok) {
         await loadBooks(); // Reload to update the list
+      } else {
+        const detail = await response.json().catch(() => ({}));
+        appStatus.error(detail.error || 'Could not remove that book from the shelf');
       }
     } catch (error) {
       console.error('Failed to remove book from collection:', error);
+      appStatus.error('Could not reach the server');
     }
   };
 
-  useEffect(() => {
-    loadBooks();
-  }, []);
-
-  // Reload books when selected collection changes
+  // Also covers the initial load, so no separate mount effect is needed.
   useEffect(() => {
     loadBooks();
   }, [selectedCollection]);
 
-  return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex transition-colors duration-200">
-      {/* Collections Sidebar */}
-      <CollectionsSidebar
-        key={collectionsRefreshKey}
-        selectedCollection={selectedCollection}
-        onCollectionSelect={setSelectedCollection}
-        selectedBookIds={selectedBookIds}
-        isSelectionMode={isSelectionMode}
-        onBooksAdded={() => {
-          // Refresh when books are added from sidebar
-          loadBooks();
-          setCollectionsRefreshKey(prev => prev + 1);
-        }}
-      />
-
-      {/* Main Content */}
-      <div className="flex-1">
-        {/* Header */}
-        <header className="sticky top-0 z-50 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm transition-colors duration-200">
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">
-              Librarian {selectedCollection && <span className="text-lg text-gray-600 dark:text-gray-400 ml-2">/ Collection</span>}
-            </h1>
-            <div className="flex items-center space-x-4">
-              {/* Multi-select controls */}
-              {isSelectionMode && (
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm font-medium text-blue-600">
-                    {selectedBookIds.size} selected
-                  </span>
-                  <button
-                    onClick={selectAllVisible}
-                    className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-                  >
-                    Select All
-                  </button>
-                  <button
-                    onClick={clearSelection}
-                    className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-                  >
-                    Clear
-                  </button>
-                  <button
-                    onClick={() => setIsBulkActionsModalOpen(true)}
-                    disabled={selectedBookIds.size === 0}
-                    className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50"
-                  >
-                    Bulk Actions
-                  </button>
-                </div>
-              )}
-
-              {/* Full-text search toggle */}
-              <button
-                onClick={() => setShowFullTextSearch(!showFullTextSearch)}
-                className={`p-2 rounded-lg transition-colors ${
-                  showFullTextSearch
-                    ? 'bg-blue-500 text-white hover:bg-blue-600'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                }`}
-                title={showFullTextSearch ? 'Close full-text search' : 'Open full-text search'}
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16h8M8 12h8m-8-4h4M3 5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5z" />
-                </svg>
-              </button>
-
-              {/* Reading stats toggle */}
-              <button
-                onClick={() => setShowReadingStats(!showReadingStats)}
-                className={`p-2 rounded-lg transition-colors ${
-                  showReadingStats
-                    ? 'bg-purple-500 text-white hover:bg-purple-600'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                }`}
-                title={showReadingStats ? 'Close reading statistics' : 'Open reading statistics'}
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </button>
-
-              {/* Dark mode toggle */}
-              <button
-                onClick={toggleDarkMode}
-                className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-                title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-              >
-                {isDark ? (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clipRule="evenodd" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
-                  </svg>
-                )}
-              </button>
-
-              <span className="text-sm text-gray-600 dark:text-gray-400">
-                {loading ? 'Loading...' : (searchQuery || selectedTag || selectedAuthor || selectedFileType) ? `${filteredAndSortedBooks.length} of ${books.length}` : `${books.length} books`}
-              </span>
-              <input
-                type="text"
-                placeholder="Search books..."
-                className="px-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              <button
-                onClick={() => setIsSelectionMode(!isSelectionMode)}
-                className={`px-4 py-2 rounded-lg transition-colors ${isSelectionMode ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}`}
-              >
-                {isSelectionMode ? '✓ Selecting' : 'Select'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Filter Bar - Also sticky below the header */}
-      <div className="sticky top-16 z-40 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-3 shadow-sm transition-colors duration-200">
-        <div className="flex items-center space-x-4">
-          {/* Tag Filter */}
-          {allTags.length > 0 && (
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Tag:</label>
-              <select
-                className="px-3 py-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={selectedTag}
-                onChange={(e) => setSelectedTag(e.target.value)}
-              >
-                <option value="">All Tags</option>
-                {allTags.map(tag => (
-                  <option key={tag} value={tag}>{tag}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Author Filter */}
-          {allAuthors.length > 0 && (
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Author:</label>
-              <select
-                className="px-3 py-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={selectedAuthor}
-                onChange={(e) => setSelectedAuthor(e.target.value)}
-              >
-                <option value="">All Authors</option>
-                {allAuthors.map(author => (
-                  <option key={author} value={author}>{author}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* File Type Filter */}
-          <div className="flex items-center space-x-2">
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Type:</label>
-            <select
-              className="px-3 py-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={selectedFileType}
-              onChange={(e) => setSelectedFileType(e.target.value)}
-            >
-              <option value="">All Types</option>
-              {allFileTypes.map(type => (
-                <option key={type} value={type}>{type.toUpperCase()}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Sort Options */}
-          <div className="flex items-center space-x-2">
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Sort by:</label>
-            <select
-              className="px-3 py-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-            >
-              <option value="title">Title</option>
-              <option value="author">Author</option>
-              <option value="date_added">Date Added</option>
-              <option value="file_size">File Size</option>
-            </select>
-            <button
-              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-              className="px-2 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-              title={`Sort ${sortOrder === 'asc' ? 'Descending' : 'Ascending'}`}
-            >
-              {sortOrder === 'asc' ? '↑' : '↓'}
-            </button>
-          </div>
-
-          {/* Clear Filters */}
-          {(selectedTag || selectedAuthor || selectedFileType) && (
-            <button
-              onClick={() => {
-                setSelectedTag('');
-                setSelectedAuthor('');
-                setSelectedFileType('');
-              }}
-              className="px-3 py-1 bg-red-500 dark:bg-red-600 text-white rounded-md text-sm hover:bg-red-600 dark:hover:bg-red-700 transition-colors"
-            >
-              Clear Filters
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Full-text Search Section */}
-      {showFullTextSearch && (
-        <div className="container mx-auto px-6 py-4">
-          <FullTextSearch
-            isDark={isDark}
-            onSearchResults={(results) => {
-              // Optional: Handle search results
-              console.log('Full-text search results:', results);
-            }}
-          />
-        </div>
-      )}
-
-      {/* Reading Statistics Section */}
-      {showReadingStats && (
-        <div className="container mx-auto px-6 py-4">
-          <ReadingStatsDashboard isDark={isDark} />
-        </div>
-      )}
-
-      {/* Main Content */}
-      <main className="container mx-auto px-6 py-8">
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-lg text-gray-600 dark:text-gray-400">Scanning library...</div>
-          </div>
-        ) : !books || books.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="text-gray-500 dark:text-gray-400 text-lg">
-              No books found. Click "Scan Library" to discover books.
-            </div>
-          </div>
-        ) : filteredAndSortedBooks.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="text-gray-500 dark:text-gray-400 text-lg">
-              No books match your filters.
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 lg:gap-6">
-            {filteredAndSortedBooks.map((book) => (
+  const renderBookCard = (book) => (
               <BookCard
                 key={book.id}
                 book={book}
@@ -692,8 +760,354 @@ function App() {
                 }}
                 onRemoveFromCollection={selectedCollection ? removeBookFromCollection : null}
                 selectedCollection={selectedCollection}
+                newForDays={NEW_BOOK_DAYS}
               />
-            ))}
+  );
+
+  return (
+    <div className="flex min-h-screen bg-canvas text-ink">
+      {/* Collections Sidebar */}
+      <CollectionsSidebar
+        key={collectionsRefreshKey}
+        selectedCollection={selectedCollection}
+        onCollectionSelect={setSelectedCollection}
+        unseenCount={unseenCount}
+        selectedBookIds={selectedBookIds}
+        isSelectionMode={isSelectionMode}
+        onBooksAdded={() => {
+          // Refresh when books are added from sidebar
+          loadBooks();
+          setCollectionsRefreshKey(prev => prev + 1);
+        }}
+      />
+
+      {/* Main Content */}
+      <div className="flex-1">
+        {/* Header */}
+        <header className="sticky top-0 z-50 border-b border-hairline bg-surface/85 shadow-bar backdrop-blur-md">
+        <div className="px-6 py-3 lg:px-8">
+          <div className="flex items-center justify-between">
+            <h1 className="flex items-baseline gap-2 text-lg font-semibold tracking-tight text-ink">
+              Librarian
+              {selectedCollection && (
+                <span className="text-sm font-normal text-ink-faint">
+                  / {selectedCollection === 'recently-added'
+                    ? 'Recently Added'
+                    : selectedCollection === 'currently-reading'
+                      ? 'Currently Reading'
+                      : 'Collection'}
+                </span>
+              )}
+            </h1>
+            <div className="flex items-center gap-1.5">
+              {/* Multi-select controls */}
+              {isSelectionMode && (
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-accent-ink">
+                    {selectedBookIds.size} selected
+                  </span>
+                  <button
+                    onClick={selectAllVisible}
+                    className="px-3 py-1 text-sm bg-accent-soft text-blue-700 rounded hover:bg-blue-200"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={clearSelection}
+                    className="px-3 py-1 text-sm bg-surface-sunken text-ink-muted rounded hover:bg-surface-hover"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    onClick={() => setIsBulkActionsModalOpen(true)}
+                    disabled={selectedBookIds.size === 0}
+                    className="px-3 py-1 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    Bulk Actions
+                  </button>
+                </div>
+              )}
+
+              {/* Duplicate Manager */}
+              <DuplicateManager
+                onLibraryChanged={() => {
+                  loadBooks();
+                  setCollectionsRefreshKey((k) => k + 1);
+                }}
+              />
+
+              {/* Full-text search toggle */}
+              <button
+                onClick={() => setShowFullTextSearch(!showFullTextSearch)}
+                className={showFullTextSearch ? 'flex h-8 w-8 items-center justify-center rounded-md bg-accent-soft text-accent-ink transition-colors' : 'flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink'}
+                title={showFullTextSearch ? 'Close full-text search' : 'Open full-text search'}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16h8M8 12h8m-8-4h4M3 5a2 2 0 012-2h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5z" />
+                </svg>
+              </button>
+
+              {/* Cross-book comparison toggle */}
+              <button
+                onClick={() => setShowCompare(!showCompare)}
+                className={showCompare ? 'flex h-8 w-8 items-center justify-center rounded-md bg-accent-soft text-accent-ink transition-colors' : 'flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink'}
+                title={showCompare ? 'Close cross-book comparison' : 'Compare how your books explain a topic'}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+              </button>
+
+              {/* Reading stats toggle */}
+              <button
+                onClick={() => setShowReadingStats(!showReadingStats)}
+                className={showReadingStats ? 'flex h-8 w-8 items-center justify-center rounded-md bg-accent-soft text-accent-ink transition-colors' : 'flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink'}
+                title={showReadingStats ? 'Close reading statistics' : 'Open reading statistics'}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </button>
+
+              {/* Preferences button */}
+              <button
+                onClick={() => setIsPreferencesOpen(true)}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
+                title="Preferences"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+
+              {/* Dark mode toggle */}
+              <button
+                onClick={toggleDarkMode}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
+                title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                {isDark ? (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clipRule="evenodd" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+                  </svg>
+                )}
+              </button>
+
+              <span className="hidden shrink-0 text-xs tabular-nums text-ink-faint sm:inline">
+                {loading
+                  ? 'Loading…'
+                  /* Say how many are showing whenever that differs from the
+                     library's size. Reporting only the total made a working
+                     filter look like it had done nothing — hiding 39 adult
+                     books still read as "834 books". */
+                  : filteredAndSortedBooks.length !== (totalBooks || books.length)
+                    ? `${filteredAndSortedBooks.length} of ${totalBooks || books.length}`
+                    : `${totalBooks || books.length} books`}
+              </span>
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  placeholder="Search, or ask…"
+                  title="Type words to match, or a question like &quot;russian books about business&quot; and press Ask"
+                  className="h-8 w-56 rounded-md border border-hairline bg-surface-sunken px-3 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:bg-surface focus:outline-none"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAsk(); }}
+                />
+                <button
+                  onClick={handleAsk}
+                  disabled={asking || !searchQuery.trim()}
+                  title="Read the box as a question and set the filters it means"
+                  className="h-8 shrink-0 rounded-md px-2.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-soft disabled:opacity-40"
+                >
+                  {asking ? 'Reading…' : 'Ask'}
+                </button>
+              </div>
+              <button
+                onClick={() => setIsSelectionMode(!isSelectionMode)}
+                className={`h-8 shrink-0 rounded-md px-3 text-sm font-medium transition-colors ${isSelectionMode ? 'bg-accent text-white' : 'text-ink-muted hover:bg-surface-hover hover:text-ink'}`}
+              >
+                {isSelectionMode ? '✓ Selecting' : 'Select'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Filter Bar - Also sticky below the header */}
+      <div className="sticky top-[3.25rem] z-40 border-b border-hairline bg-canvas/90 px-6 py-2 backdrop-blur-md lg:px-8">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {/* Tag Filter */}
+          {allTags.length > 0 && (
+            <FilterSelect
+              className="h-7 max-w-[12rem] rounded-md border border-hairline bg-surface px-2 text-xs text-ink transition-colors hover:border-ink-faint focus:border-accent focus:outline-none"
+              value={selectedTag}
+              onChange={(e) => setSelectedTag(e.target.value)}
+              placeholder="All tags"
+              title="Filter by subject tag"
+              options={[
+                ...(untaggedCount > 0
+                  ? [{ value: UNTAGGED, label: `— untagged (${untaggedCount})` }]
+                  : []),
+                ...tagCounts.map(([tag, count]) => ({ value: tag, label: `${tag} (${count})` }))
+              ]}
+            />
+          )}
+
+          {/* Author Filter */}
+          {allAuthors.length > 0 && (
+            <FilterSelect
+              className="h-7 max-w-[12rem] rounded-md border border-hairline bg-surface px-2 text-xs text-ink transition-colors hover:border-ink-faint focus:border-accent focus:outline-none"
+              value={selectedAuthor}
+              onChange={(e) => setSelectedAuthor(e.target.value)}
+              placeholder="All Authors"
+              options={allAuthors.map((author) => ({ value: author, label: author }))}
+            />
+          )}
+
+          {/* File Type Filter */}
+          <FilterSelect
+            className="h-7 max-w-[12rem] rounded-md border border-hairline bg-surface px-2 text-xs text-ink transition-colors hover:border-ink-faint focus:border-accent focus:outline-none"
+            value={selectedFileType}
+            onChange={(e) => setSelectedFileType(e.target.value)}
+            placeholder="All Types"
+            options={allFileTypes.map((type) => ({ value: type, label: type.toUpperCase() }))}
+          />
+
+          {/* Language Filter */}
+          {allLanguages.length > 0 && (
+            <FilterSelect
+              className="h-7 max-w-[12rem] rounded-md border border-hairline bg-surface px-2 text-xs text-ink transition-colors hover:border-ink-faint focus:border-accent focus:outline-none"
+              value={selectedLanguage}
+              onChange={(e) => setSelectedLanguage(e.target.value)}
+              placeholder="All Languages"
+              options={allLanguages.map((lang) => ({ value: lang, label: lang }))}
+            />
+          )}
+
+          {/* Sort Options */}
+          <div className="flex items-center gap-1.5">
+            <select
+              className="h-7 max-w-[12rem] rounded-md border border-hairline bg-surface px-2 text-xs text-ink transition-colors hover:border-ink-faint focus:border-accent focus:outline-none"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <option value="title">Title</option>
+              <option value="author">Author</option>
+              <option value="date_added">Date Added</option>
+              <option value="file_size">File Size</option>
+            </select>
+            <button
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-hairline bg-surface text-ink-muted transition-colors hover:border-ink-faint hover:text-ink"
+              title={`Sort ${sortOrder === 'asc' ? 'Descending' : 'Ascending'}`}
+            >
+              {sortOrder === 'asc' ? '↑' : '↓'}
+            </button>
+          </div>
+
+          {/* Clear Filters */}
+          {(selectedTag || selectedAuthor || selectedFileType || selectedLanguage || askConstraints) && (
+            <button
+              onClick={() => {
+                setSelectedTag('');
+                setSelectedAuthor('');
+                setSelectedFileType('');
+                setSelectedLanguage('');
+                setAskConstraints(null);
+                appStatus.clear();
+              }}
+              className="h-7 rounded-md px-2.5 text-xs font-medium text-accent-ink transition-colors hover:bg-accent-soft"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      {appStatus.status && (
+        <div className="px-6 pt-3 lg:px-8">
+          <StatusNote status={appStatus.status} onDismiss={appStatus.clear} />
+        </div>
+      )}
+
+      {/* Full-text Search Section */}
+      {showFullTextSearch && (
+        <div className="px-6 py-4 lg:px-8">
+          <FullTextSearch
+            isDark={isDark}
+            onSearchResults={(results) => {
+              // Optional: Handle search results
+              console.log('Full-text search results:', results);
+            }}
+          />
+        </div>
+      )}
+
+      {/* Cross-book Comparison Section */}
+      {showCompare && (
+        <div className="px-6 py-4 lg:px-8">
+          <CrossBookCompare />
+        </div>
+      )}
+
+      {/* Reading Statistics Section */}
+      {showReadingStats && (
+        <div className="px-6 py-4 lg:px-8">
+          <ReadingStatsDashboard isDark={isDark} />
+        </div>
+      )}
+
+      {/* Main Content */}
+      <main className="px-6 py-6 lg:px-8">
+        {loading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="text-sm text-ink-muted">Scanning library…</div>
+          </div>
+        ) : !books || books.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="text-sm text-ink-muted">Loading library…</div>
+          </div>
+        ) : filteredAndSortedBooks.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="text-sm text-ink-muted">No books match your filters.</div>
+          </div>
+        ) : (
+          booksByDay ? (
+            /* Newest first, split by the day each book arrived. */
+            <div className="space-y-8">
+              {booksByDay.map((group) => (
+                <section key={group.label}>
+                  <div className="mb-3 flex items-baseline gap-3">
+                    <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
+                      {group.label}
+                    </h2>
+                    <span className="text-2xs tabular-nums text-ink-faint">
+                      {group.total} {group.total === 1 ? 'book' : 'books'}
+                    </span>
+                    <span className="h-px flex-1 bg-hairline" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 lg:gap-4">
+                    {group.books.map(renderBookCard)}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 lg:gap-4">
+              {visibleBooks.map(renderBookCard)}
+            </div>
+          )
+        )}
+
+        {!loading && visibleBooks.length < filteredAndSortedBooks.length && (
+          <div ref={loadMoreRef} className="py-10 text-center text-xs text-ink-faint">
+            Loading more books…
           </div>
         )}
       </main>
@@ -758,6 +1172,13 @@ function App() {
           }}
         />
       )}
+
+      {/* Preferences Modal */}
+      <PreferencesModal
+        isOpen={isPreferencesOpen}
+        onClose={() => setIsPreferencesOpen(false)}
+        onSaved={(saved) => setUserPreferences(saved)}
+      />
       </div>
     </div>
   );

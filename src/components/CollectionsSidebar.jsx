@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import StatusNote, { useStatus } from './StatusNote';
 
-function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBookIds, isSelectionMode, onBooksAdded }) {
+function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBookIds, isSelectionMode, onBooksAdded, unseenCount = 0 }) {
+  const notice = useStatus();
+  const [suggestions, setSuggestions] = useState(null);
+  const [suggesting, setSuggesting] = useState(false);
   const [collections, setCollections] = useState([]);
   const [isCreating, setIsCreating] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
@@ -51,9 +55,13 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
         setNewCollectionName('');
         setIsCreating(false);
         await loadCollections();
+      } else {
+        const detail = await response.json().catch(() => ({}));
+        notice.error(detail.error || 'Could not create that shelf');
       }
     } catch (error) {
       console.error('Failed to create collection:', error);
+      notice.error('Could not reach the server');
     }
   };
 
@@ -70,14 +78,18 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
 
       if (response.ok) {
         const result = await response.json();
-        alert(result.message);
+        notice.success(result.message);
         await loadCollections(); // Refresh counts
         if (onBooksAdded) {
           onBooksAdded(); // Trigger parent refresh
         }
+      } else {
+        const detail = await response.json().catch(() => ({}));
+        notice.error(detail.error || 'Could not add those books');
       }
     } catch (error) {
       console.error('Failed to add books to collection:', error);
+      notice.error('Could not reach the server');
     } finally {
       setLoading(false);
     }
@@ -96,21 +108,66 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
         if (selectedCollection === id) {
           onCollectionSelect(null);
         }
+      } else {
+        const detail = await response.json().catch(() => ({}));
+        notice.error(detail.error || 'Could not delete that shelf');
       }
     } catch (error) {
       console.error('Failed to delete collection:', error);
     }
   };
 
+  const suggestShelves = async () => {
+    setSuggesting(true);
+    notice.clear();
+    try {
+      const response = await fetch('http://localhost:3001/api/collections/suggest');
+      const data = await response.json();
+      if (!response.ok) {
+        notice.error(data.error || 'Could not get suggestions');
+        return;
+      }
+      if (!data.collections?.length) {
+        notice.info('Nothing to suggest yet — tag some books first.');
+        return;
+      }
+      setSuggestions(data.collections);
+    } catch {
+      notice.error('Could not reach the server');
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const createSuggested = async (proposal) => {
+    try {
+      const response = await fetch('http://localhost:3001/api/collections/suggest/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(proposal)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        notice.error(data.error || 'Could not create that shelf');
+        return;
+      }
+      notice.success(`Created "${data.name}" with ${data.added} book(s)`);
+      setSuggestions((current) => current.filter((c) => c.name !== proposal.name));
+      loadCollections();
+    } catch {
+      notice.error('Could not reach the server');
+    }
+  };
+
   return (
-    <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 h-screen sticky top-0 overflow-y-auto transition-colors duration-200">
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">Collections</h2>
+    <aside className="sticky top-0 h-screen w-56 shrink-0 overflow-y-auto border-r border-hairline bg-surface-sunken">
+      <div className="p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="px-2 text-2xs font-semibold uppercase tracking-wider text-ink-faint">Collections</h2>
           {!isCreating && (
             <button
               onClick={() => setIsCreating(true)}
-              className="text-blue-500 hover:text-blue-600"
+              className="flex h-6 w-6 items-center justify-center rounded text-ink-faint transition-colors hover:bg-surface-hover hover:text-ink"
               title="Create new collection"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -120,6 +177,50 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
           )}
         </div>
 
+        <StatusNote status={notice.status} onDismiss={notice.clear} className="mb-3" />
+
+        <button
+          onClick={suggestShelves}
+          disabled={suggesting}
+          className="mb-3 w-full rounded-md px-2 py-1.5 text-left text-xs text-ink-faint transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
+        >
+          {suggesting ? 'Looking at your library…' : '✦ Suggest shelves'}
+        </button>
+
+        {suggestions && (
+          <div className="mb-3 space-y-1.5">
+            {suggestions.map((proposal) => (
+              <div key={proposal.name} className="rounded-md bg-surface p-2 ring-1 ring-hairline">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate text-xs font-medium text-ink">
+                    {proposal.icon} {proposal.name}
+                  </span>
+                  <span className="shrink-0 text-2xs tabular-nums text-ink-faint">
+                    {proposal.count}
+                  </span>
+                </div>
+                <p className="mt-0.5 line-clamp-2 text-2xs leading-snug text-ink-faint">
+                  {proposal.tags.join(', ')}
+                </p>
+                <div className="mt-1.5 flex gap-1.5">
+                  <button
+                    onClick={() => createSuggested(proposal)}
+                    className="rounded bg-accent px-2 py-0.5 text-2xs font-medium text-white hover:bg-accent-hover"
+                  >
+                    Create
+                  </button>
+                  <button
+                    onClick={() => setSuggestions((c) => c.filter((x) => x.name !== proposal.name))}
+                    className="rounded px-2 py-0.5 text-2xs text-ink-faint hover:text-ink"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {isCreating && (
           <div className="mb-4">
             <input
@@ -128,13 +229,13 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
               onChange={(e) => setNewCollectionName(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && createCollection()}
               placeholder="Collection name..."
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-hairline bg-surface text-ink rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
               autoFocus
             />
             <div className="flex space-x-2 mt-2">
               <button
                 onClick={createCollection}
-                className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
+                className="px-3 py-1 bg-accent text-white text-sm rounded hover:bg-accent-hover"
               >
                 Create
               </button>
@@ -143,7 +244,7 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
                   setIsCreating(false);
                   setNewCollectionName('');
                 }}
-                className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300"
+                className="px-3 py-1 rounded border border-hairline text-sm text-ink-muted hover:bg-surface-hover hover:text-ink"
               >
                 Cancel
               </button>
@@ -153,36 +254,43 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
 
         {/* All Books */}
         <div
-          className={`p-3 rounded-lg cursor-pointer transition-colors ${
-            selectedCollection === null
-              ? 'bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
-              : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+          className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors cursor-pointer ${
+            selectedCollection === null ? 'bg-accent-soft text-accent-ink' : 'text-ink hover:bg-surface-hover'
           }`}
           onClick={() => onCollectionSelect(null)}
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <span className="text-xl">📚</span>
-              <span className="font-medium text-gray-800 dark:text-gray-100">All Books</span>
-            </div>
-          </div>
+          <span className="text-base leading-none">📚</span>
+          <span className="flex-1">All Books</span>
+        </div>
+
+        {/* Recently Added - a view over the library, not a stored collection */}
+        <div
+          className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors cursor-pointer ${
+            selectedCollection === 'recently-added' ? 'bg-accent-soft text-accent-ink' : 'text-ink hover:bg-surface-hover'
+          }`}
+          onClick={() => onCollectionSelect('recently-added')}
+        >
+          <span className="text-base leading-none">🆕</span>
+          <span className="flex-1">Recently Added</span>
+          {unseenCount > 0 && (
+            <span
+              className="rounded-full bg-accent px-1.5 py-0.5 text-2xs font-semibold tabular-nums text-white"
+              title={`${unseenCount} added since you last looked`}
+            >
+              {unseenCount > 99 ? '99+' : unseenCount}
+            </span>
+          )}
         </div>
 
         {/* Currently Reading - Special Collection */}
         <div
-          className={`p-3 rounded-lg cursor-pointer transition-colors ${
-            selectedCollection === 'currently-reading'
-              ? 'bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
-              : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+          className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors cursor-pointer ${
+            selectedCollection === 'currently-reading' ? 'bg-accent-soft text-accent-ink' : 'text-ink hover:bg-surface-hover'
           }`}
           onClick={() => onCollectionSelect('currently-reading')}
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <span className="text-xl">📖</span>
-              <span className="font-medium text-gray-800 dark:text-gray-100">Currently Reading</span>
-            </div>
-          </div>
+          <span className="text-base leading-none">📖</span>
+          <span className="flex-1">Currently Reading</span>
         </div>
 
         {/* Collections List */}
@@ -190,19 +298,17 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
           {collections.map((collection) => (
             <div key={collection.id} className="group relative">
               <div
-                className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                  selectedCollection === collection.id
-                    ? 'bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700'
-                    : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+                className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors cursor-pointer ${
+                  selectedCollection === collection.id ? 'bg-accent-soft text-accent-ink' : 'text-ink hover:bg-surface-hover'
                 }`}
                 onClick={() => onCollectionSelect(collection.id)}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <span className="text-xl">{collection.icon || '📁'}</span>
+                    <span className="text-base leading-none">{collection.icon || '📁'}</span>
                     <div>
-                      <div className="font-medium text-gray-800 dark:text-gray-100">{collection.name}</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">{collection.book_count || 0} books</div>
+                      <div className="truncate">{collection.name}</div>
+                      
                     </div>
                   </div>
                   <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -212,7 +318,7 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
                           e.stopPropagation();
                           addSelectedBooksToCollection(collection.id);
                         }}
-                        className="p-1 text-green-600 hover:bg-green-50 rounded"
+                        className="p-1 text-green-600 hover:bg-emerald-500/10 rounded"
                         title="Add selected books"
                         disabled={loading}
                       >
@@ -226,7 +332,7 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
                         e.stopPropagation();
                         deleteCollection(collection.id);
                       }}
-                      className="p-1 text-red-600 hover:bg-red-50 rounded"
+                      className="p-1 text-red-600 hover:bg-red-500/10 rounded"
                       title="Delete collection"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -242,17 +348,17 @@ function CollectionsSidebar({ selectedCollection, onCollectionSelect, selectedBo
 
         {/* Quick add to collection when in selection mode */}
         {isSelectionMode && selectedBookIds.size > 0 && (
-          <div className="mt-6 p-3 bg-blue-50 dark:bg-blue-900 rounded-lg">
-            <p className="text-sm text-blue-800 dark:text-blue-200 mb-2">
+          <div className="mt-5 rounded-md bg-accent-soft px-2.5 py-2">
+            <p className="text-xs font-medium text-accent-ink">
               {selectedBookIds.size} book{selectedBookIds.size !== 1 ? 's' : ''} selected
             </p>
-            <p className="text-xs text-blue-600 dark:text-blue-300">
-              Click the + icon next to a collection to add selected books
+            <p className="mt-1 text-2xs leading-snug text-ink-muted">
+              Use the + beside a collection to add them
             </p>
           </div>
         )}
       </div>
-    </div>
+    </aside>
   );
 }
 

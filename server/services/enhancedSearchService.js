@@ -2,6 +2,9 @@ const { db } = require('../database/init');
 const pdfParse = require('pdf-parse');
 const fs = require('fs').promises;
 const properPdfExtractor = require('./properPdfExtractor');
+const path = require('path');
+const epubPageExtractor = require('./epubPageExtractor');
+const pdfOcrExtractor = require('./pdfOcrExtractor');
 
 class EnhancedSearchService {
   constructor() {
@@ -68,15 +71,51 @@ class EnhancedSearchService {
         return { success: true, message: 'Already indexed', pageCount: existingPages.count };
       }
 
+      try {
+        await fs.access(book.file_path);
+      } catch {
+        return { success: false, message: `File not found: ${book.file_path}` };
+      }
+
       console.log(`Indexing pages for: ${book.title || 'Untitled'}`);
 
-      // Use proper PDF extraction that matches viewer page numbers
-      const extractionResult = await properPdfExtractor.extractPages(book.file_path, {
-        verbose: false
-      });
+      /*
+       * PDFs have pages the viewer can navigate to, so their numbering comes
+       * from the file. ePUBs reflow and have none, so the extractor cuts the
+       * reading order into pages of comparable size — useful for retrieval and
+       * citation, but not something the ePUB reader can jump to.
+       */
+      const isEpub = path.extname(book.file_path || '').toLowerCase() === '.epub';
+      const isScanned = !isEpub && book.pdf_type === 'scanned';
+
+      let extractionResult;
+      let source;
+
+      if (isEpub) {
+        source = 'ePUB';
+        extractionResult = await epubPageExtractor.extractPages(book.file_path);
+      } else if (isScanned) {
+        // No text layer to read, so the pages are rendered and recognised.
+        // Far slower than the others — seconds a page rather than milliseconds.
+        source = 'OCR';
+        extractionResult = await pdfOcrExtractor.extractPages(book.file_path, {
+          pageCount: book.page_count,
+          language: book.language,
+          // A long scan is minutes of silence otherwise, which is
+          // indistinguishable from a hang.
+          onProgress: ({ done, total }) => {
+            if (done % 40 === 0 || done === total) {
+              process.stdout.write(`   OCR ${done}/${total} pages\r`);
+            }
+          }
+        });
+      } else {
+        source = 'PDF';
+        extractionResult = await properPdfExtractor.extractPages(book.file_path, { verbose: false });
+      }
 
       if (!extractionResult.success) {
-        throw new Error(`PDF extraction failed: ${extractionResult.error}`);
+        throw new Error(`${source} extraction failed: ${extractionResult.error}`);
       }
 
       const pages = extractionResult.pages;
@@ -106,9 +145,21 @@ class EnhancedSearchService {
         }
       }
 
+      if (isScanned) {
+        db.prepare(`
+          UPDATE books
+          SET ocr_status = 'completed',
+              ocr_confidence = ?,
+              ocr_processed = 1,
+              ocr_processed_at = datetime('now')
+          WHERE id = ?
+        `).run(extractionResult.confidence ?? null, bookId);
+      }
+
       db.exec('COMMIT');
 
-      console.log(`✅ Indexed ${pages.length} pages (${totalWords} words)`);
+      console.log(`✅ Indexed ${pages.length} pages (${totalWords} words)` +
+        (isScanned ? ` via OCR, ${Math.round(extractionResult.confidence)}% confidence, ${extractionResult.languages}` : ''));
 
       return {
         success: true,
@@ -117,8 +168,14 @@ class EnhancedSearchService {
       };
 
     } catch (error) {
-      console.error(`Error indexing pages for book ${bookId}:`, error);
-      db.exec('ROLLBACK');
+      console.error(`Error indexing pages for book ${bookId}: ${error.message}`);
+
+      // Only roll back a transaction that was actually opened. Extraction runs
+      // before BEGIN, so a failure there left nothing to roll back and the
+      // ROLLBACK threw on top of the original error — which escaped this
+      // handler and ended the whole indexing run on the first missing file.
+      if (db.inTransaction) db.exec('ROLLBACK');
+
       return {
         success: false,
         message: error.message

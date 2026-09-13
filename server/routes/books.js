@@ -2,6 +2,21 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../database/init');
 const thumbnailGenerator = require('../services/thumbnailGeneratorPdf2pic');
+
+/**
+ * Columns returned by the book listing. Deliberately not b.* — manual_metadata
+ * holds the raw PDF info blob and accounted for 2.8MB of a 3.3MB response
+ * despite nothing in the UI reading it, and ocr_text is unbounded. Both are
+ * still available from GET /api/books/:id.
+ */
+const LIST_COLUMNS = [
+  'b.id', 'b.title', 'b.author', 'b.language', 'b.file_path', 'b.file_size',
+  'b.page_count', 'b.pdf_type', 'b.ocr_confidence', 'b.needs_review',
+  'b.date_added', 'b.last_modified', 'b.last_opened', 'b.thumbnail_path',
+  'b.publication_year', 'b.isbn', 'b.publisher', 'b.edition', 'b.description',
+  'b.categories', 'b.average_rating', 'b.thumbnail_url', 'b.metadata_source',
+  'b.ocr_status', 'b.is_adult'
+].join(', ');
 const metadataEnricher = require('../services/bookMetadataEnricher');
 const fs = require('fs');
 const path = require('path');
@@ -182,7 +197,7 @@ router.get('/', (req, res) => {
     const sortBy = req.query.sortBy || 'date_added';
     const sortOrder = req.query.sortOrder?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
 
-    let query = 'SELECT DISTINCT b.* FROM books b WHERE 1=1';
+    let query = `SELECT DISTINCT ${LIST_COLUMNS} FROM books b WHERE 1=1`;
     const params = [];
 
     // Search filter
@@ -211,7 +226,7 @@ router.get('/', (req, res) => {
 
     // Tags filter (if we have tags in the query)
     if (tags.length > 0) {
-      query = `SELECT DISTINCT b.* FROM books b
+      query = `SELECT DISTINCT ${LIST_COLUMNS} FROM books b
                INNER JOIN book_tags bt ON b.id = bt.book_id
                INNER JOIN tags t ON bt.tag_id = t.id
                WHERE 1=1`;
@@ -242,20 +257,61 @@ router.get('/', (req, res) => {
 
     const books = db.prepare(query).all(...params);
 
-    // Add thumbnail URLs and tags to each book
+    // Fetch all tags for all books in one query for performance
+    const bookIds = books.map(b => b.id);
+    let allTags = [];
+
+    if (bookIds.length > 0) {
+      const placeholders = bookIds.map(() => '?').join(',');
+      allTags = db.prepare(`
+        SELECT bt.book_id, t.name
+        FROM book_tags bt
+        INNER JOIN tags t ON bt.tag_id = t.id
+        WHERE bt.book_id IN (${placeholders})
+      `).all(...bookIds);
+    }
+
+    // Group tags by book_id
+    const tagsByBook = {};
+    allTags.forEach(({ book_id, name }) => {
+      if (!tagsByBook[book_id]) {
+        tagsByBook[book_id] = [];
+      }
+      tagsByBook[book_id].push(name);
+    });
+
+    // Reading progress in the same round trip. Each card used to fetch its own
+    // progress, so rendering a page of the library fired one request per book.
+    let progressByBook = {};
+
+    if (bookIds.length > 0) {
+      const placeholders = bookIds.map(() => '?').join(',');
+      const rows = db.prepare(`
+        SELECT book_id, current_page, total_pages, percentage, last_read,
+               started_reading, finished_reading, reading_time_minutes
+        FROM reading_progress
+        WHERE book_id IN (${placeholders})
+      `).all(...bookIds);
+
+      progressByBook = Object.fromEntries(rows.map(row => [row.book_id, row]));
+    }
+
+    // Add thumbnail URLs, tags and progress to each book
     books.forEach(book => {
       if (book.thumbnail_path) {
         book.thumbnail_url = `http://localhost:3001${book.thumbnail_path}`;
       }
-
-      // Get tags for this book
-      const bookTags = db.prepare(`
-        SELECT t.name FROM tags t
-        INNER JOIN book_tags bt ON t.id = bt.tag_id
-        WHERE bt.book_id = ?
-      `).all(book.id);
-
-      book.tags = bookTags.map(t => t.name);
+      book.tags = tagsByBook[book.id] || [];
+      book.readingProgress = progressByBook[book.id] || {
+        book_id: book.id,
+        current_page: 0,
+        total_pages: book.page_count || 0,
+        percentage: 0,
+        reading_time_minutes: 0,
+        last_read: null,
+        started_reading: null,
+        finished_reading: null
+      };
     });
 
     // Get total count for pagination
@@ -361,7 +417,11 @@ router.post('/', (req, res) => {
 // Update book metadata
 router.put('/:id', (req, res) => {
   try {
-    const { title, author, language, publication_year, isbn, publisher, edition, description, tags, categories, thumbnail_path } = req.body;
+    const { title, author, language, publication_year, isbn, publisher, edition, description, tags, categories, thumbnail_path, is_adult } = req.body;
+    const bookId = Number(req.params.id);
+
+    const exists = db.prepare('SELECT 1 FROM books WHERE id = ?').get(bookId);
+    if (!exists) return res.status(404).json({ error: 'Book not found' });
 
     // Build UPDATE query dynamically to only update provided fields
     const updateFields = [];
@@ -376,40 +436,100 @@ router.put('/:id', (req, res) => {
     if (edition !== undefined) { updateFields.push('edition = ?'); values.push(edition); }
     if (description !== undefined) { updateFields.push('description = ?'); values.push(description); }
     if (thumbnail_path !== undefined) { updateFields.push('thumbnail_path = ?'); values.push(thumbnail_path); }
+    if (is_adult !== undefined) { updateFields.push('is_adult = ?'); values.push(is_adult); }
 
-    // Always update last_modified
-    updateFields.push('last_modified = CURRENT_TIMESTAMP');
+    /**
+     * Tags arrive as names, because that is how every other endpoint here
+     * reports them — the listing has always served `tags: ["python"]`, so a
+     * client that edits a book and sends it back naturally returns names. This
+     * route used to treat them as row ids and insert them straight into
+     * book_tags, which fails the foreign key. Numeric ids are still accepted,
+     * since older callers may send those.
+     */
+    const resolveTagIds = (input) => {
+      const findByName = db.prepare('SELECT id FROM tags WHERE name = ?');
+      const findById = db.prepare('SELECT id FROM tags WHERE id = ?');
+      const insertTag = db.prepare('INSERT INTO tags (name) VALUES (?)');
 
-    if (updateFields.length > 1) { // More than just last_modified
-      const query = `UPDATE books SET ${updateFields.join(', ')} WHERE id = ?`;
-      values.push(req.params.id);
-      db.prepare(query).run(...values);
-    }
+      const ids = [];
+      for (const entry of input) {
+        const value = typeof entry === 'object' && entry !== null ? (entry.id ?? entry.name) : entry;
+        if (value === null || value === undefined || value === '') continue;
 
-    // Update tags if provided
-    if (tags !== undefined) {
-      db.prepare('DELETE FROM book_tags WHERE book_id = ?').run(req.params.id);
-      if (tags.length > 0) {
-        const insertTag = db.prepare('INSERT INTO book_tags (book_id, tag_id) VALUES (?, ?)');
-        tags.forEach(tagId => {
-          insertTag.run(req.params.id, tagId);
-        });
+        if (typeof value === 'number' || /^\d+$/.test(String(value))) {
+          const row = findById.get(Number(value));
+          if (row) ids.push(row.id);
+          continue;
+        }
+
+        const name = String(value).trim();
+        if (!name) continue;
+
+        const existing = findByName.get(name);
+        ids.push(existing ? existing.id : insertTag.run(name).lastInsertRowid);
       }
-    }
 
-    // Update categories if provided
-    if (categories !== undefined) {
-      db.prepare('DELETE FROM book_categories WHERE book_id = ?').run(req.params.id);
-      if (categories.length > 0) {
-        const insertCategory = db.prepare('INSERT INTO book_categories (book_id, category_id) VALUES (?, ?)');
-        categories.forEach(categoryId => {
-          insertCategory.run(req.params.id, categoryId);
-        });
+      return [...new Set(ids)];
+    };
+
+    const resolveCategoryIds = (input) => {
+      const findById = db.prepare('SELECT id FROM categories WHERE id = ?');
+      const findByName = db.prepare('SELECT id FROM categories WHERE name = ?');
+
+      const ids = [];
+      for (const entry of input) {
+        const value = typeof entry === 'object' && entry !== null ? (entry.id ?? entry.name) : entry;
+        if (value === null || value === undefined || value === '') continue;
+
+        const row = (typeof value === 'number' || /^\d+$/.test(String(value)))
+          ? findById.get(Number(value))
+          : findByName.get(String(value).trim());
+
+        if (row) ids.push(row.id);
       }
-    }
 
-    // Return the updated book
-    const updatedBook = db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id);
+      return [...new Set(ids)];
+    };
+
+    /**
+     * One transaction. Previously the metadata update ran, then the tag
+     * replacement deleted the book's tags and threw on the insert — leaving
+     * the book half-updated with every tag gone, while the caller was told the
+     * save had failed.
+     */
+    const save = db.transaction(() => {
+      if (updateFields.length > 0) {
+        updateFields.push('last_modified = CURRENT_TIMESTAMP');
+        db.prepare(`UPDATE books SET ${updateFields.join(', ')} WHERE id = ?`)
+          .run(...values, bookId);
+      }
+
+      if (Array.isArray(tags)) {
+        const ids = resolveTagIds(tags);
+        db.prepare('DELETE FROM book_tags WHERE book_id = ?').run(bookId);
+        const link = db.prepare('INSERT OR IGNORE INTO book_tags (book_id, tag_id) VALUES (?, ?)');
+        for (const tagId of ids) link.run(bookId, tagId);
+      }
+
+      if (Array.isArray(categories)) {
+        const ids = resolveCategoryIds(categories);
+        db.prepare('DELETE FROM book_categories WHERE book_id = ?').run(bookId);
+        const link = db.prepare('INSERT OR IGNORE INTO book_categories (book_id, category_id) VALUES (?, ?)');
+        for (const categoryId of ids) link.run(bookId, categoryId);
+      }
+    });
+
+    save();
+
+    // Return the updated book with its tags, so the client does not have to
+    // re-fetch to see what it just saved.
+    const updatedBook = db.prepare('SELECT * FROM books WHERE id = ?').get(bookId);
+    updatedBook.tags = db.prepare(`
+      SELECT t.name FROM tags t
+      JOIN book_tags bt ON bt.tag_id = t.id
+      WHERE bt.book_id = ?
+    `).all(bookId).map((r) => r.name);
+
     res.json(updatedBook);
   } catch (error) {
     console.error('Error updating book:', error);

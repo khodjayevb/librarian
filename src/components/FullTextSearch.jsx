@@ -4,7 +4,7 @@ import SearchResultsModal from './SearchResultsModal';
 
 function FullTextSearch({ onSearchResults, isDark }) {
   const [query, setQuery] = useState('');
-  const [searchType, setSearchType] = useState('any'); // any, all, phrase
+  const [searchType, setSearchType] = useState('any'); // any, all, phrase, semantic, hybrid
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState([]);
   const [totalResults, setTotalResults] = useState(0);
@@ -13,6 +13,17 @@ function FullTextSearch({ onSearchResults, isDark }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedBook, setSelectedBook] = useState(null);
   const [showOccurrencesModal, setShowOccurrencesModal] = useState(false);
+  const [embeddingStats, setEmbeddingStats] = useState(null);
+
+  // Fetch embedding stats on mount
+  useEffect(() => {
+    fetch('http://localhost:3001/api/search/embeddings/stats')
+      .then(res => res.json())
+      .then(setEmbeddingStats)
+      .catch(() => {});
+  }, []);
+
+  const isSemanticMode = searchType === 'semantic' || searchType === 'hybrid';
 
   // Debounced search function
   const performSearch = useCallback(
@@ -25,9 +36,20 @@ function FullTextSearch({ onSearchResults, isDark }) {
 
       setIsSearching(true);
       try {
-        const response = await fetch(
-          `http://localhost:3001/api/search/books?q=${encodeURIComponent(searchQuery)}&matchType=${matchType}&limit=20`
-        );
+        let response;
+        if (matchType === 'semantic') {
+          response = await fetch(
+            `http://localhost:3001/api/search/semantic?q=${encodeURIComponent(searchQuery)}&limit=20`
+          );
+        } else if (matchType === 'hybrid') {
+          response = await fetch(
+            `http://localhost:3001/api/search/hybrid?q=${encodeURIComponent(searchQuery)}&limit=20`
+          );
+        } else {
+          response = await fetch(
+            `http://localhost:3001/api/search/books?q=${encodeURIComponent(searchQuery)}&matchType=${matchType}&limit=20`
+          );
+        }
         const data = await response.json();
 
         setResults(data.results || []);
@@ -113,10 +135,10 @@ function FullTextSearch({ onSearchResults, isDark }) {
     <div className="relative w-full max-w-4xl mx-auto">
       {/* Search Input */}
       <div className="relative">
-        <div className="flex items-center gap-2 p-4 bg-white dark:bg-gray-800 rounded-lg shadow-md">
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-surface ring-1 ring-hairline shadow-card">
           {/* Search Icon */}
           <svg
-            className="w-6 h-6 text-gray-400"
+            className="w-6 h-6 text-ink-faint"
             fill="none"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -133,30 +155,32 @@ function FullTextSearch({ onSearchResults, isDark }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search within PDF content..."
-            className="flex-1 px-2 py-1 bg-transparent text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none"
+            className="flex-1 px-2 py-1 bg-transparent text-ink placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none"
           />
 
           {/* Search Type Selector */}
           <select
             value={searchType}
             onChange={(e) => setSearchType(e.target.value)}
-            className="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-1 text-sm bg-surface-sunken text-ink-muted rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
           >
             <option value="any">Any words</option>
             <option value="all">All words</option>
             <option value="phrase">Exact phrase</option>
+            <option value="semantic">Smart Search</option>
+            <option value="hybrid">Hybrid (Best)</option>
           </select>
 
           {/* Loading Indicator */}
           {isSearching && (
-            <div className="w-5 h-5 border-t-2 border-blue-500 border-solid rounded-full animate-spin"></div>
+            <div className="w-5 h-5 border-t-2 border-accent border-solid rounded-full animate-spin"></div>
           )}
 
           {/* Clear Button */}
           {query && (
             <button
               onClick={() => setQuery('')}
-              className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              className="p-1 text-ink-faint transition-colors hover:text-ink"
             >
               ✕
             </button>
@@ -165,17 +189,17 @@ function FullTextSearch({ onSearchResults, isDark }) {
 
         {/* Suggestions Dropdown */}
         {showSuggestions && (
-          <div className="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700">
+          <div className="absolute z-10 w-full mt-1 bg-surface rounded-lg shadow-lg border border-hairline">
             {suggestions.map((suggestion, index) => (
               <button
                 key={index}
                 onClick={() => handleSuggestionClick(suggestion.suggestion)}
-                className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between"
+                className="w-full px-4 py-2 text-left hover:bg-surface-hover flex items-center justify-between"
               >
-                <span className="text-gray-800 dark:text-gray-200">
+                <span className="text-ink">
                   {highlightMatch(suggestion.suggestion, query)}
                 </span>
-                <span className="text-xs text-gray-500 dark:text-gray-400">
+                <span className="text-xs text-ink-faint">
                   {suggestion.type}
                 </span>
               </button>
@@ -186,10 +210,10 @@ function FullTextSearch({ onSearchResults, isDark }) {
 
       {/* Search Results */}
       {showResults && (
-        <div className="mt-4 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+        <div className="mt-3 rounded-xl bg-surface ring-1 ring-hairline shadow-card p-4">
           {/* Results Header */}
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+            <h3 className="text-lg font-semibold text-ink">
               {totalResults > 0 ? (
                 <>
                   Found {totalResults} result{totalResults !== 1 ? 's' : ''} for "{query}"
@@ -200,7 +224,7 @@ function FullTextSearch({ onSearchResults, isDark }) {
             </h3>
             <button
               onClick={() => setShowResults(false)}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              className="text-ink-faint transition-colors hover:text-ink"
             >
               ✕
             </button>
@@ -212,7 +236,7 @@ function FullTextSearch({ onSearchResults, isDark }) {
               {results.map((result) => (
                 <div
                   key={result.id}
-                  className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                  className="p-4 border border-hairline rounded-lg hover:bg-surface-hover cursor-pointer"
                   onClick={() => {
                     // Open book detail modal or navigate to book
                     window.location.href = `#book-${result.id}`;
@@ -230,23 +254,23 @@ function FullTextSearch({ onSearchResults, isDark }) {
 
                     {/* Book Details */}
                     <div className="flex-1">
-                      <h4 className="font-semibold text-gray-800 dark:text-gray-200">
+                      <h4 className="font-semibold text-ink">
                         {result.title || 'Untitled'}
                       </h4>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                      <p className="text-sm text-ink-muted">
                         {result.author || 'Unknown Author'}
                       </p>
 
                       {/* Snippet with highlights */}
                       {result.snippet && (
                         <div
-                          className="mt-2 text-sm text-gray-700 dark:text-gray-300 line-clamp-2"
+                          className="mt-2 text-sm text-ink-muted line-clamp-2"
                           dangerouslySetInnerHTML={{ __html: result.snippet }}
                         />
                       )}
 
                       {/* Additional Metadata */}
-                      <div className="mt-2 flex gap-4 text-xs text-gray-500 dark:text-gray-400">
+                      <div className="mt-2 flex gap-4 text-xs text-ink-faint">
                         {result.publication_year && (
                           <span>Year: {result.publication_year}</span>
                         )}
@@ -258,6 +282,37 @@ function FullTextSearch({ onSearchResults, isDark }) {
                         )}
                       </div>
 
+                      {/* Semantic search indicators */}
+                      {isSemanticMode && (
+                        <div className="mt-2 flex items-center gap-2">
+                          {result.similarity != null && (
+                            <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 rounded text-xs">
+                              {Math.round(result.similarity * 100)}% match
+                            </span>
+                          )}
+                          {result.matchType === 'both' && (
+                            <span className="px-2 py-0.5 bg-accent-soft text-accent-ink rounded text-xs">
+                              keyword + semantic
+                            </span>
+                          )}
+                          {result.matchType === 'semantic' && (
+                            <span className="px-2 py-0.5 bg-accent-soft text-accent-ink rounded text-xs">
+                              semantic
+                            </span>
+                          )}
+                          {result.matchType === 'keyword' && (
+                            <span className="px-2 py-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 rounded text-xs">
+                              keyword
+                            </span>
+                          )}
+                          {result.score != null && (
+                            <span className="text-xs text-ink-faint">
+                              score: {result.score.toFixed(3)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
                       {/* Action Buttons */}
                       <div className="mt-3 flex gap-2">
                         <button
@@ -265,7 +320,7 @@ function FullTextSearch({ onSearchResults, isDark }) {
                             e.stopPropagation();
                             handleViewOccurrences(result);
                           }}
-                          className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 flex items-center gap-1"
+                          className="px-3 py-1 text-xs bg-accent text-white rounded hover:bg-accent-hover flex items-center gap-1"
                         >
                           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -278,7 +333,7 @@ function FullTextSearch({ onSearchResults, isDark }) {
                             e.stopPropagation();
                             window.location.href = `#book-${result.id}`;
                           }}
-                          className="px-3 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600"
+                          className="px-3 py-1 rounded border border-hairline text-xs text-ink-muted hover:bg-surface-hover hover:text-ink"
                         >
                           Open Book
                         </button>
@@ -294,7 +349,7 @@ function FullTextSearch({ onSearchResults, isDark }) {
           {results.length < totalResults && (
             <div className="mt-4 text-center">
               <button
-                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+                className="px-4 py-2 bg-accent text-white rounded-md hover:bg-accent-hover"
                 onClick={() => {
                   // Load more results
                   performSearch(query, searchType);
@@ -309,16 +364,23 @@ function FullTextSearch({ onSearchResults, isDark }) {
 
       {/* Search Tips */}
       {!query && (
-        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+        <div className="mt-4 p-4 bg-surface-sunken rounded-lg">
+          <h4 className="text-sm font-semibold text-ink-muted mb-2">
             Search Tips:
           </h4>
-          <ul className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-            <li>• Use "Any words" to find books containing any of your search terms</li>
-            <li>• Use "All words" to find books containing all of your search terms</li>
-            <li>• Use "Exact phrase" to find books with the exact sequence of words</li>
+          <ul className="text-xs text-ink-muted space-y-1">
+            <li>• <strong>Any words</strong> — find books containing any of your search terms</li>
+            <li>• <strong>All words</strong> — find books containing all of your search terms</li>
+            <li>• <strong>Exact phrase</strong> — find books with the exact sequence of words</li>
+            <li>• <strong>Smart Search</strong> — AI-powered semantic search by meaning, not just keywords</li>
+            <li>• <strong>Hybrid (Best)</strong> — combines keyword + semantic for best results</li>
             <li>• Minimum 2 characters required to search</li>
           </ul>
+          {embeddingStats && (
+            <p className="mt-2 text-xs text-ink-faint">
+              {embeddingStats.embeddedBooks}/{embeddingStats.totalBooks} books indexed for smart search ({embeddingStats.coverage}%)
+            </p>
+          )}
         </div>
       )}
 
