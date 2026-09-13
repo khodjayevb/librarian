@@ -29,6 +29,13 @@ const SCHEMA = {
 const ADULT_MODEL = process.env.OLLAMA_MODEL || 'gemma3:4b';
 const ADULT_VERIFY_MODEL = process.env.OLLAMA_VERIFY_MODEL || 'qwen3.6:35b-a3b';
 
+// The small model's answer for a few hundred books never lands on the
+// vocabulary — "programming" for a Prolog text, the title echoed back — and
+// at temperature 0 it never will. Those go to a bigger model, which on a
+// sample placed 20 of 20 with most of them right. Only the misses pay for
+// it, so the usual pass stays fast.
+const TAG_FALLBACK_MODEL = process.env.OLLAMA_TAG_FALLBACK_MODEL || ADULT_VERIFY_MODEL;
+
 const ADULT_SCHEMA = {
   type: 'object',
   properties: {
@@ -104,24 +111,39 @@ Reply as JSON: {"tags": ["tag1"]}`;
    * 'keywords' so callers can tell how the tags were arrived at.
    */
   async suggest(book) {
-    const reply = await ollama.generateJSON(this.buildPrompt(book), SCHEMA, {
-      system: SYSTEM,
-      maxTokens: 96
-    });
+    const prompt = this.buildPrompt(book);
 
-    if (reply && Array.isArray(reply.tags)) {
-      // The model invents tags whatever the prompt says, so membership is
-      // enforced here rather than trusted.
-      const tags = [];
-      for (const raw of reply.tags) {
-        const tag = vocabulary.canonicalize(raw);
-        if (tag && !tags.includes(tag)) tags.push(tag);
-      }
+    let tags = await this.askModel(prompt);
+    if (tags.length > 0) return { tags, source: 'ai' };
 
-      if (tags.length > 0) return { tags: tags.slice(0, MAX_TAGS), source: 'ai' };
+    if (TAG_FALLBACK_MODEL && TAG_FALLBACK_MODEL !== ollama.model) {
+      tags = await this.askModel(prompt, TAG_FALLBACK_MODEL);
+      if (tags.length > 0) return { tags, source: 'ai' };
     }
 
     return { tags: await this.keywordFallback(book), source: 'keywords' };
+  }
+
+  /** Ask one model; returns the vocabulary tags it landed on, possibly none. */
+  async askModel(prompt, model) {
+    const reply = await ollama.generateJSON(prompt, SCHEMA, {
+      system: SYSTEM,
+      maxTokens: 96,
+      model,
+      // A 35B model needs a moment to load the first time it is asked.
+      timeout: model ? 180000 : undefined
+    });
+
+    if (!reply || !Array.isArray(reply.tags)) return [];
+
+    // The model invents tags whatever the prompt says, so membership is
+    // enforced here rather than trusted.
+    const tags = [];
+    for (const raw of reply.tags) {
+      const tag = vocabulary.canonicalize(raw);
+      if (tag && !tags.includes(tag)) tags.push(tag);
+    }
+    return tags.slice(0, MAX_TAGS);
   }
 
   /**
@@ -499,6 +521,7 @@ Reply as JSON: {"tags": ["tag1"]}`;
     return {
       available,
       model: ollama.model,
+      fallbackModel: TAG_FALLBACK_MODEL,
       host: ollama.host,
       vocabularySize: vocabulary.TAGS.length,
       untagged: this.countUntagged(),
