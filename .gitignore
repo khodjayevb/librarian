@@ -57,3 +57,5 @@ data/*.backup-*
 *.tmp
 temp/
 tmp/
+# Built on first use from tools/visionocr/main.swift
+tools/visionocr/visionocr

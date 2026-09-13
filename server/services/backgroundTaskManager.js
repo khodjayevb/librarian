@@ -16,7 +16,14 @@ const ENRICH_DELAY_MS = Number(process.env.ENRICH_DELAY_MS) || 1000;
 const ADULT_BATCH_SIZE = Number(process.env.ADULT_BATCH_SIZE) || 20;
 const TAG_BATCH_SIZE = Number(process.env.TAG_BATCH_SIZE) || 20;
 const INDEX_BATCH_SIZE = Number(process.env.INDEX_BATCH_SIZE) || 10;
+const OCR_BACKGROUND = (process.env.OCR_BACKGROUND || 'on').toLowerCase() !== 'off';
+const OCR_NICE = Number(process.env.OCR_NICE) || 15;
+// A 3000-page scan is under two hours at the measured two seconds a page.
+const OCR_TIMEOUT_MS = Number(process.env.OCR_TIMEOUT_MS) || 3 * 3600 * 1000;
 const enhancedSearch = require('./enhancedSearchService');
+const os = require('os');
+const fsSync = require('fs');
+const { spawn } = require('child_process');
 const thumbnailGenerator = require('./thumbnailGeneratorPdf2pic');
 const EventEmitter = require('events');
 
@@ -37,6 +44,7 @@ class BackgroundTaskManager extends EventEmitter {
     this.isEnriching = false;
     this.isTagging = false;
     this.isIndexing = false;
+    this.isOcring = false;
     this.warnedNoOllama = false;
     // Books whose text could not be read this run. Retried after a restart,
     // which is soon enough for a file that has since been fixed.
@@ -317,6 +325,125 @@ class BackgroundTaskManager extends EventEmitter {
     }, 60000);
 
     setTimeout(() => this.indexUnindexedBooks(), 45000);
+
+    // Scanned books, one at a time, in a low-priority child process. Days of
+    // work for a large library, so it only starts once the text books are
+    // done and never gets in the way of anything interactive.
+    if (OCR_BACKGROUND) {
+      this.ocrInterval = setInterval(() => {
+        this.ocrScannedBooks();
+      }, 120000);
+
+      setTimeout(() => this.ocrScannedBooks(), 90000);
+    }
+  }
+
+  /**
+   * OCR the next scanned book that has no text. Smallest first: the early
+   * results arrive in minutes rather than hours, and a book that fails is
+   * marked so it is not retried on every pass — index-pages.js --ocr can
+   * force one by hand.
+   */
+  async ocrScannedBooks() {
+    if (this.isOcring || this.isIndexing) return;
+    this.isOcring = true;
+
+    try {
+      const book = db.prepare(`
+        SELECT b.id, b.title, b.file_path, b.pdf_type, b.page_count, b.language
+        FROM books b
+        WHERE b.pdf_type = 'scanned'
+          AND b.needs_review = 0
+          AND (b.ocr_status IS NULL OR b.ocr_status NOT IN ('completed', 'failed', 'no_text'))
+          AND NOT EXISTS (SELECT 1 FROM book_pages p WHERE p.book_id = b.id)
+        ORDER BY COALESCE(b.page_count, 100000), b.id
+        LIMIT 1
+      `).get();
+
+      if (!book) return;
+
+      if (!(await this.fileExists(book.file_path))) {
+        this.markMissing(book.id);
+        return;
+      }
+
+      const remaining = db.prepare(`
+        SELECT COUNT(*) AS n FROM books b
+        WHERE b.pdf_type = 'scanned' AND b.needs_review = 0
+          AND (b.ocr_status IS NULL OR b.ocr_status NOT IN ('completed', 'failed', 'no_text'))
+          AND NOT EXISTS (SELECT 1 FROM book_pages p WHERE p.book_id = b.id)
+      `).get().n;
+
+      console.log(`🔍 OCR: ${path.basename(book.file_path)} (${book.page_count || '?'} pages, ${remaining} scanned book(s) to go)`);
+      const started = Date.now();
+
+      const result = await this.runOcrChild(book);
+      const setStatus = db.prepare('UPDATE books SET ocr_status = ? WHERE id = ?');
+
+      if (!result.success) {
+        setStatus.run('failed', book.id);
+        console.error(`   ❌ ${path.basename(book.file_path)}: ${result.error || 'OCR failed'}`);
+        return;
+      }
+
+      const { stored, totalWords } = enhancedSearch.storePages(book.id, result);
+      if (stored === 0) {
+        setStatus.run('no_text', book.id);
+        console.error(`   ❌ ${path.basename(book.file_path)}: OCR found no readable text`);
+        return;
+      }
+
+      const minutes = ((Date.now() - started) / 60000).toFixed(1);
+      console.log(`   ✅ ${path.basename(book.file_path)}: ${stored} pages, ${totalWords} words, ` +
+                  `${Math.round(result.confidence || 0)}% confidence, ${minutes} min`);
+
+      // Straight on to the next one; the interval is only a safety net.
+      setTimeout(() => this.ocrScannedBooks(), 2000);
+    } catch (error) {
+      console.error('OCR pass failed:', error.message);
+    } finally {
+      this.isOcring = false;
+    }
+  }
+
+  runOcrChild(book) {
+    return new Promise((resolve) => {
+      const resultPath = path.join(os.tmpdir(), `bibliotheka-ocr-${book.id}-${process.pid}.json`);
+      const script = path.join(__dirname, 'ocrChild.js');
+      const child = spawn('nice', ['-n', String(OCR_NICE), process.execPath, script, JSON.stringify(book), resultPath], {
+        cwd: path.join(__dirname, '../..'),
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      let stderr = '';
+      child.stdout.on('data', (data) => process.stdout.write(data));
+      child.stderr.on('data', (data) => { stderr += data; });
+
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, OCR_TIMEOUT_MS);
+
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        resolve({ success: false, error: error.message });
+      });
+
+      child.on('close', (code, signal) => {
+        clearTimeout(timer);
+        let result;
+        try {
+          result = JSON.parse(fsSync.readFileSync(resultPath, 'utf8'));
+        } catch {
+          result = {
+            success: false,
+            error: signal ? `killed by ${signal} after ${OCR_TIMEOUT_MS / 60000} min` :
+                   `exited with code ${code}: ${stderr.trim().split('\n').pop() || 'no output'}`
+          };
+        }
+        fsSync.unlink(resultPath, () => {});
+        resolve(result);
+      });
+    });
   }
 
   /**
@@ -744,6 +871,7 @@ class BackgroundTaskManager extends EventEmitter {
     if (this.enrichInterval) clearInterval(this.enrichInterval);
     if (this.tagInterval) clearInterval(this.tagInterval);
     if (this.indexInterval) clearInterval(this.indexInterval);
+    if (this.ocrInterval) clearInterval(this.ocrInterval);
 
     await processorPool.shutdown();
 

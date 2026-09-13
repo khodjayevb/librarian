@@ -7,6 +7,7 @@ const path = require('path');
 const properPdfExtractor = require('./properPdfExtractor');
 const epubPageExtractor = require('./epubPageExtractor');
 const pdfOcrExtractor = require('./pdfOcrExtractor');
+const visionOcrExtractor = require('./visionOcrExtractor');
 
 /**
  * PDFs have pages the viewer can navigate to, so their numbering comes from
@@ -34,7 +35,10 @@ async function extractPages(book, { ocr = true, onProgress } = {}) {
     if (!ocr) {
       return { success: false, skipped: true, source: 'OCR', error: 'Scanned PDF; OCR not requested' };
     }
-    const result = await pdfOcrExtractor.extractPages(book.file_path, {
+    // Apple's Vision framework where it is available: several times faster
+    // than Tesseract and better at Cyrillic. Tesseract stays as the fallback.
+    const engine = visionOcrExtractor.isAvailable() ? visionOcrExtractor : pdfOcrExtractor;
+    const result = await engine.extractPages(book.file_path, {
       pageCount: book.page_count,
       language: book.language,
       onProgress

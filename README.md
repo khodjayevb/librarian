@@ -76,7 +76,7 @@ and tagging falls back to keyword matching.
 - **Database**: SQLite with better-sqlite3
 - **PDF Processing**:
   - pdf-parse (metadata extraction)
-  - Tesseract.js (OCR for scanned PDFs)
+  - Apple Vision (OCR for scanned PDFs on macOS; Tesseract.js elsewhere)
   - pdf2pic + GraphicsMagick (thumbnail generation)
 - **Build System**: GitHub Actions CI/CD
 
