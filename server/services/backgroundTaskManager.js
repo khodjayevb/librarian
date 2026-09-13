@@ -214,6 +214,14 @@ class BackgroundTaskManager extends EventEmitter {
     this.fileWatcher.on('unlink', async (filePath) => {
       const ext = path.extname(filePath).toLowerCase();
       if (ext === '.pdf' || ext === '.epub') {
+        // When the external drive unmounts, every file vanishes at once and
+        // this handler fires for each of them. Deleting the rows would empty
+        // the library; the books are still there, just not reachable.
+        if (!(await this.fileExists(this.booksFolder))) {
+          console.warn(`Ignoring removal of ${path.basename(filePath)}: books folder is not mounted`);
+          return;
+        }
+
         console.log(`🗑️  Book removed: ${path.basename(filePath)}`);
 
         try {

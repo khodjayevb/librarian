@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "start": "concurrently \"npm run server\" \"npm run electron:dev\"",
+    "ui": "concurrently \"npm run react:start\" \"npm run electron:dev\"",
     "react:start": "vite",
     "react:build": "vite build",
     "electron:dev": "wait-on http://localhost:5173 && electron .",

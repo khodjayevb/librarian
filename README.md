@@ -123,6 +123,32 @@ npm run react:start  # Frontend (port 5173)
 npm run electron:dev # Electron app
 ```
 
+## Running the backend all the time (macOS)
+
+The backend can run as a launchd agent so new books are ingested whenever they
+land, whether or not the window is open. The agent definition is in
+`launchd/com.khodjayevb.bibliotheka.plist` (adjust the paths for your machine):
+
+```bash
+ln -sf "$PWD/launchd/com.khodjayevb.bibliotheka.plist" ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.khodjayevb.bibliotheka.plist
+launchctl kickstart -k gui/$(id -u)/com.khodjayevb.bibliotheka   # restart
+launchctl bootout gui/$(id -u)/com.khodjayevb.bibliotheka        # stop
+```
+
+Logs go to `logs/server.log` and `logs/server.err.log`.
+
+Two things to know:
+
+- **Grant `node` Full Disk Access** (System Settings → Privacy & Security →
+  Full Disk Access → "+", then ⌘⇧G and paste the path from the plist). In a
+  terminal, `node` inherits the terminal's access to external volumes; under
+  launchd it has none, and the very first `readdir` of the books folder blocks
+  forever with no error. The grant is tied to that exact binary, so re-grant
+  after a Node upgrade.
+- **Start the window with `npm run ui`, not `npm start`.** `npm start` launches
+  its own backend and collides with the agent on port 3001.
+
 ## Testing against a copy of your library
 
 Anything that deletes or merges books should be tried against a copy, not the
@@ -168,6 +194,7 @@ Bibliotheka/
 ### Available Scripts
 
 - `npm start` - Start all components
+- `npm run ui` - Frontend and Electron only (backend already running as a launchd agent)
 - `npm run server` - Start backend server only
 - `npm run react:start` - Start React dev server
 - `npm run electron:dev` - Start Electron (requires React running)

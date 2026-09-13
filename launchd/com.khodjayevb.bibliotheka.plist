@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.khodjayevb.bibliotheka</string>
+
+    <!-- The backend only: it watches the books folder, ingests new files and
+         serves the API on port 3001. Start the window with `npm run ui`;
+         `npm start` would launch a second server and collide on the port. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/khodjayevb/.nvm/versions/node/v22.18.0/bin/node</string>
+        <string>/Users/khodjayevb/dev/Bibliotheka/server/index.js</string>
+    </array>
+
+    <!-- .env is read from here, and thumbnails go to public/thumbnails. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/khodjayevb/dev/Bibliotheka</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <!-- Short retry: the only real failure is port 3001 still held by an
+         old copy, which clears in a second or two. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Not ProcessType/Background: it serves the UI, and background
+         throttling would make the library grid crawl. -->
+
+    <!-- launchd has no shell PATH; Ghostscript and GraphicsMagick are in
+         Homebrew, and pdf2pic finds them by name. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/khodjayevb</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/khodjayevb/dev/Bibliotheka/logs/server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/khodjayevb/dev/Bibliotheka/logs/server.err.log</string>
+</dict>
+</plist>
