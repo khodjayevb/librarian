@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { db } = require('../database/init');
+const { decorateBooks } = require('./books');
 const smartCollections = require('../services/smartCollections');
 
 // Get all collections
@@ -60,7 +61,7 @@ router.get('/:id', (req, res) => {
       ORDER BY bc.position, bc.added_at DESC
     `).all(req.params.id);
 
-    res.json({ ...collection, books });
+    res.json({ ...collection, books: decorateBooks(books) });
   } catch (error) {
     console.error('Error fetching collection:', error);
     res.status(500).json({ error: 'Failed to fetch collection' });

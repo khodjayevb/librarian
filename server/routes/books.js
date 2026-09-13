@@ -21,6 +21,68 @@ const metadataEnricher = require('../services/bookMetadataEnricher');
 const fs = require('fs');
 const path = require('path');
 
+/**
+ * Attach what a card needs beyond the row itself: the cover URL, tags and
+ * reading progress, each fetched in one query for the whole page. Every
+ * endpoint that returns books for the grid goes through this — the
+ * collection view used to return bare rows, so shelves showed no covers.
+ */
+function decorateBooks(books) {
+  const bookIds = books.map(b => b.id);
+  const placeholders = bookIds.map(() => '?').join(',');
+
+  // Group tags by book_id
+  const tagsByBook = {};
+  if (bookIds.length > 0) {
+    const allTags = db.prepare(`
+      SELECT bt.book_id, t.name
+      FROM book_tags bt
+      INNER JOIN tags t ON bt.tag_id = t.id
+      WHERE bt.book_id IN (${placeholders})
+    `).all(...bookIds);
+
+    allTags.forEach(({ book_id, name }) => {
+      if (!tagsByBook[book_id]) {
+        tagsByBook[book_id] = [];
+      }
+      tagsByBook[book_id].push(name);
+    });
+  }
+
+  // Reading progress in the same round trip. Each card used to fetch its own
+  // progress, so rendering a page of the library fired one request per book.
+  let progressByBook = {};
+  if (bookIds.length > 0) {
+    const rows = db.prepare(`
+      SELECT book_id, current_page, total_pages, percentage, last_read,
+             started_reading, finished_reading, reading_time_minutes
+      FROM reading_progress
+      WHERE book_id IN (${placeholders})
+    `).all(...bookIds);
+
+    progressByBook = Object.fromEntries(rows.map(row => [row.book_id, row]));
+  }
+
+  books.forEach(book => {
+    if (book.thumbnail_path) {
+      book.thumbnail_url = `http://localhost:3001${book.thumbnail_path}`;
+    }
+    book.tags = tagsByBook[book.id] || [];
+    book.readingProgress = progressByBook[book.id] || {
+      book_id: book.id,
+      current_page: 0,
+      total_pages: book.page_count || 0,
+      percentage: 0,
+      reading_time_minutes: 0,
+      last_read: null,
+      started_reading: null,
+      finished_reading: null
+    };
+  });
+
+  return books;
+}
+
 // IMPORTANT: Bulk routes must come BEFORE /:id routes to avoid route matching issues
 
 // Bulk operations
@@ -257,62 +319,7 @@ router.get('/', (req, res) => {
 
     const books = db.prepare(query).all(...params);
 
-    // Fetch all tags for all books in one query for performance
-    const bookIds = books.map(b => b.id);
-    let allTags = [];
-
-    if (bookIds.length > 0) {
-      const placeholders = bookIds.map(() => '?').join(',');
-      allTags = db.prepare(`
-        SELECT bt.book_id, t.name
-        FROM book_tags bt
-        INNER JOIN tags t ON bt.tag_id = t.id
-        WHERE bt.book_id IN (${placeholders})
-      `).all(...bookIds);
-    }
-
-    // Group tags by book_id
-    const tagsByBook = {};
-    allTags.forEach(({ book_id, name }) => {
-      if (!tagsByBook[book_id]) {
-        tagsByBook[book_id] = [];
-      }
-      tagsByBook[book_id].push(name);
-    });
-
-    // Reading progress in the same round trip. Each card used to fetch its own
-    // progress, so rendering a page of the library fired one request per book.
-    let progressByBook = {};
-
-    if (bookIds.length > 0) {
-      const placeholders = bookIds.map(() => '?').join(',');
-      const rows = db.prepare(`
-        SELECT book_id, current_page, total_pages, percentage, last_read,
-               started_reading, finished_reading, reading_time_minutes
-        FROM reading_progress
-        WHERE book_id IN (${placeholders})
-      `).all(...bookIds);
-
-      progressByBook = Object.fromEntries(rows.map(row => [row.book_id, row]));
-    }
-
-    // Add thumbnail URLs, tags and progress to each book
-    books.forEach(book => {
-      if (book.thumbnail_path) {
-        book.thumbnail_url = `http://localhost:3001${book.thumbnail_path}`;
-      }
-      book.tags = tagsByBook[book.id] || [];
-      book.readingProgress = progressByBook[book.id] || {
-        book_id: book.id,
-        current_page: 0,
-        total_pages: book.page_count || 0,
-        percentage: 0,
-        reading_time_minutes: 0,
-        last_read: null,
-        started_reading: null,
-        finished_reading: null
-      };
-    });
+    decorateBooks(books);
 
     // Get total count for pagination
     let countQuery = 'SELECT COUNT(*) as total FROM books WHERE 1=1';
@@ -839,3 +846,4 @@ router.post('/bulk/enrich', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.decorateBooks = decorateBooks;
