@@ -15,6 +15,8 @@ const ENRICH_BATCH_SIZE = Number(process.env.ENRICH_BATCH_SIZE) || 25;
 const ENRICH_DELAY_MS = Number(process.env.ENRICH_DELAY_MS) || 1000;
 const ADULT_BATCH_SIZE = Number(process.env.ADULT_BATCH_SIZE) || 20;
 const TAG_BATCH_SIZE = Number(process.env.TAG_BATCH_SIZE) || 20;
+const INDEX_BATCH_SIZE = Number(process.env.INDEX_BATCH_SIZE) || 10;
+const enhancedSearch = require('./enhancedSearchService');
 const thumbnailGenerator = require('./thumbnailGeneratorPdf2pic');
 const EventEmitter = require('events');
 
@@ -34,7 +36,11 @@ class BackgroundTaskManager extends EventEmitter {
     this.isGeneratingThumbnails = false;
     this.isEnriching = false;
     this.isTagging = false;
+    this.isIndexing = false;
     this.warnedNoOllama = false;
+    // Books whose text could not be read this run. Retried after a restart,
+    // which is soon enough for a file that has since been fixed.
+    this.indexFailed = new Set();
     // Books tried this run, so a lookup that finds nothing is not repeated
     // every five minutes. Cleared on restart, which retries after an outage.
     this.enrichAttempted = new Set();
@@ -302,6 +308,82 @@ class BackgroundTaskManager extends EventEmitter {
     }, 120000);
 
     setTimeout(() => this.tagUntaggedBooks(), 30000);
+
+    // Extract the text of whatever has none yet. Summaries, asking a book a
+    // question and page search all read from it, and until now it was only
+    // ever filled in by hand, so most of the library had none.
+    this.indexInterval = setInterval(() => {
+      this.indexUnindexedBooks();
+    }, 60000);
+
+    setTimeout(() => this.indexUnindexedBooks(), 45000);
+  }
+
+  /**
+   * Page-index books that have no text yet. Extraction happens in the worker
+   * pool and the rows are written here, one book at a time: the pool is shared
+   * with metadata extraction for new arrivals, which should not queue behind
+   * a backlog of old ones.
+   *
+   * Scanned PDFs are left alone — OCR is minutes per book and stays opt-in.
+   * They keep their "Scan" badge, which says why they have no text.
+   */
+  async indexUnindexedBooks() {
+    if (this.isIndexing) return;
+    this.isIndexing = true;
+
+    try {
+      const batch = db.prepare(`
+        SELECT b.id, b.title, b.file_path, b.pdf_type, b.page_count, b.language
+        FROM books b
+        WHERE b.needs_review = 0
+          AND b.language IS NOT NULL
+          AND (b.pdf_type IS NULL OR b.pdf_type != 'scanned')
+          AND NOT EXISTS (SELECT 1 FROM book_pages p WHERE p.book_id = b.id)
+        ORDER BY b.date_added DESC
+        LIMIT ?
+      `).all(INDEX_BATCH_SIZE + this.indexFailed.size)
+        .filter((book) => !this.indexFailed.has(book.id))
+        .slice(0, INDEX_BATCH_SIZE);
+
+      if (batch.length === 0) return;
+
+      console.log(`📄 Extracting text from ${batch.length} book(s)`);
+
+      for (const book of batch) {
+        if (!(await this.fileExists(book.file_path))) {
+          this.markMissing(book.id);
+          continue;
+        }
+
+        const result = await processorPool.extractPages(book);
+
+        if (!result.success || !result.pages || result.pages.length === 0) {
+          this.indexFailed.add(book.id);
+          console.error(`   ❌ ${path.basename(book.file_path)}: ${result.error || 'no text found'}`);
+          continue;
+        }
+
+        const { stored, totalWords } = enhancedSearch.storePages(book.id, result);
+        if (stored === 0) {
+          // Every page came back blank — a text layer with nothing in it.
+          // Nothing was written, so it would be picked up again next sweep.
+          this.indexFailed.add(book.id);
+          console.error(`   ❌ ${path.basename(book.file_path)}: pages contain no text`);
+          continue;
+        }
+        console.log(`   ✅ ${path.basename(book.file_path)}: ${stored} pages, ${totalWords} words`);
+      }
+
+      // Keep going while there is work, rather than waiting out the interval.
+      if (batch.length === INDEX_BATCH_SIZE) {
+        setTimeout(() => this.indexUnindexedBooks(), 1000);
+      }
+    } catch (error) {
+      console.error('Text extraction pass failed:', error.message);
+    } finally {
+      this.isIndexing = false;
+    }
   }
 
   /**
@@ -661,6 +743,7 @@ class BackgroundTaskManager extends EventEmitter {
     if (this.thumbnailInterval) clearInterval(this.thumbnailInterval);
     if (this.enrichInterval) clearInterval(this.enrichInterval);
     if (this.tagInterval) clearInterval(this.tagInterval);
+    if (this.indexInterval) clearInterval(this.indexInterval);
 
     await processorPool.shutdown();
 

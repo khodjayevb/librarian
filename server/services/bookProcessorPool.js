@@ -89,7 +89,7 @@ class BookProcessorPool {
 
       job.worker = worker;
       this.pending.set(job.id, job);
-      worker.postMessage({ id: job.id, filePath: job.filePath });
+      worker.postMessage({ id: job.id, ...job.payload });
     }
   }
 
@@ -99,10 +99,19 @@ class BookProcessorPool {
    * interrupt a scan.
    */
   process(filePath) {
+    return this.submit({ task: 'metadata', filePath });
+  }
+
+  /** Extract a book's text page by page; same contract as process(). */
+  extractPages(book) {
+    return this.submit({ task: 'pages', book });
+  }
+
+  submit(payload) {
     this.start();
 
     return new Promise((resolve) => {
-      this.queue.push({ id: this.nextId++, filePath, resolve });
+      this.queue.push({ id: this.nextId++, payload, resolve });
       this.drain();
     });
   }

@@ -1,10 +1,7 @@
 const { db } = require('../database/init');
 const pdfParse = require('pdf-parse');
 const fs = require('fs').promises;
-const properPdfExtractor = require('./properPdfExtractor');
-const path = require('path');
-const epubPageExtractor = require('./epubPageExtractor');
-const pdfOcrExtractor = require('./pdfOcrExtractor');
+const { extractPages } = require('./pageExtraction');
 
 class EnhancedSearchService {
   constructor() {
@@ -79,84 +76,22 @@ class EnhancedSearchService {
 
       console.log(`Indexing pages for: ${book.title || 'Untitled'}`);
 
-      /*
-       * PDFs have pages the viewer can navigate to, so their numbering comes
-       * from the file. ePUBs reflow and have none, so the extractor cuts the
-       * reading order into pages of comparable size — useful for retrieval and
-       * citation, but not something the ePUB reader can jump to.
-       */
-      const isEpub = path.extname(book.file_path || '').toLowerCase() === '.epub';
-      const isScanned = !isEpub && book.pdf_type === 'scanned';
-
-      let extractionResult;
-      let source;
-
-      if (isEpub) {
-        source = 'ePUB';
-        extractionResult = await epubPageExtractor.extractPages(book.file_path);
-      } else if (isScanned) {
-        // No text layer to read, so the pages are rendered and recognised.
-        // Far slower than the others — seconds a page rather than milliseconds.
-        source = 'OCR';
-        extractionResult = await pdfOcrExtractor.extractPages(book.file_path, {
-          pageCount: book.page_count,
-          language: book.language,
-          // A long scan is minutes of silence otherwise, which is
-          // indistinguishable from a hang.
-          onProgress: ({ done, total }) => {
-            if (done % 40 === 0 || done === total) {
-              process.stdout.write(`   OCR ${done}/${total} pages\r`);
-            }
+      const extractionResult = await extractPages(book, {
+        // A long scan is minutes of silence otherwise, which is
+        // indistinguishable from a hang.
+        onProgress: ({ done, total }) => {
+          if (done % 40 === 0 || done === total) {
+            process.stdout.write(`   OCR ${done}/${total} pages\r`);
           }
-        });
-      } else {
-        source = 'PDF';
-        extractionResult = await properPdfExtractor.extractPages(book.file_path, { verbose: false });
-      }
+        }
+      });
 
       if (!extractionResult.success) {
-        throw new Error(`${source} extraction failed: ${extractionResult.error}`);
+        throw new Error(`${extractionResult.source} extraction failed: ${extractionResult.error}`);
       }
 
-      const pages = extractionResult.pages;
-      let totalWords = 0;
-
-      const insertPage = db.prepare(`
-        INSERT INTO book_pages (book_id, page_number, content, word_count)
-        VALUES (?, ?, ?, ?)
-      `);
-
-      const insertFTS = db.prepare(`
-        INSERT INTO pages_fts (page_id, book_id, page_number, content)
-        VALUES (?, ?, ?, ?)
-      `);
-
-      db.exec('BEGIN TRANSACTION');
-
-      for (const page of pages) {
-        if (page.content && page.content.trim().length > 0) {
-          // Insert into pages table using the actual page number from PDF
-          const result = insertPage.run(bookId, page.pageNumber, page.content, page.wordCount);
-
-          // Insert into FTS index
-          insertFTS.run(result.lastInsertRowid, bookId, page.pageNumber, page.content);
-
-          totalWords += page.wordCount;
-        }
-      }
-
-      if (isScanned) {
-        db.prepare(`
-          UPDATE books
-          SET ocr_status = 'completed',
-              ocr_confidence = ?,
-              ocr_processed = 1,
-              ocr_processed_at = datetime('now')
-          WHERE id = ?
-        `).run(extractionResult.confidence ?? null, bookId);
-      }
-
-      db.exec('COMMIT');
+      const { pages, totalWords } = this.storePages(bookId, extractionResult);
+      const isScanned = extractionResult.source === 'OCR';
 
       console.log(`✅ Indexed ${pages.length} pages (${totalWords} words)` +
         (isScanned ? ` via OCR, ${Math.round(extractionResult.confidence)}% confidence, ${extractionResult.languages}` : ''));
@@ -181,6 +116,58 @@ class EnhancedSearchService {
         message: error.message
       };
     }
+  }
+
+  /**
+   * Write extracted pages to the page table and its FTS index. Kept apart from
+   * extraction so the background sweep can extract in a worker thread and
+   * only touch the database here, on the main thread.
+   */
+  storePages(bookId, extractionResult) {
+    const pages = extractionResult.pages;
+    const isScanned = extractionResult.source === 'OCR';
+    let totalWords = 0;
+    let stored = 0;
+
+    const insertPage = db.prepare(`
+      INSERT INTO book_pages (book_id, page_number, content, word_count)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    const insertFTS = db.prepare(`
+      INSERT INTO pages_fts (page_id, book_id, page_number, content)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    const store = db.transaction(() => {
+      for (const page of pages) {
+        if (page.content && page.content.trim().length > 0) {
+          // Insert into pages table using the actual page number from PDF
+          const result = insertPage.run(bookId, page.pageNumber, page.content, page.wordCount);
+
+          // Insert into FTS index
+          insertFTS.run(result.lastInsertRowid, bookId, page.pageNumber, page.content);
+
+          totalWords += page.wordCount;
+          stored++;
+        }
+      }
+
+      if (isScanned) {
+        db.prepare(`
+          UPDATE books
+          SET ocr_status = 'completed',
+              ocr_confidence = ?,
+              ocr_processed = 1,
+              ocr_processed_at = datetime('now')
+          WHERE id = ?
+        `).run(extractionResult.confidence ?? null, bookId);
+      }
+    });
+
+    store();
+
+    return { pages, totalWords, stored };
   }
 
   /**

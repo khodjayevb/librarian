@@ -63,11 +63,26 @@ function decorateBooks(books) {
     progressByBook = Object.fromEntries(rows.map(row => [row.book_id, row]));
   }
 
+  // Whether the text has been extracted decides what the book can do:
+  // summaries, questions and page search all need it. The card shows the
+  // gap so nobody wonders why those are empty.
+  let pagesByBook = {};
+  if (bookIds.length > 0) {
+    const rows = db.prepare(`
+      SELECT book_id, COUNT(*) AS pages
+      FROM book_pages
+      WHERE book_id IN (${placeholders})
+      GROUP BY book_id
+    `).all(...bookIds);
+    pagesByBook = Object.fromEntries(rows.map(row => [row.book_id, row.pages]));
+  }
+
   books.forEach(book => {
     if (book.thumbnail_path) {
       book.thumbnail_url = `http://localhost:3001${book.thumbnail_path}`;
     }
     book.tags = tagsByBook[book.id] || [];
+    book.indexed_pages = pagesByBook[book.id] || 0;
     book.readingProgress = progressByBook[book.id] || {
       book_id: book.id,
       current_page: 0,

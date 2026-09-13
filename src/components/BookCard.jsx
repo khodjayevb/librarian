@@ -28,6 +28,15 @@ const BookCard = ({
   const needsAttention = !book.language || book.language === 'Not scanned';
   const isScanned = book.pdf_type === 'scanned';
 
+  // Two more gaps the background sweeps close on their own. Both badges are
+  // meant to disappear: on a caught-up library nearly every card has tags and
+  // text, so they mark the stragglers rather than restating the norm. Neither
+  // is shown before the book has been processed at all — "Unscanned" already
+  // says that — and a scan says why it has no text with its own badge.
+  const isProcessed = !needsAttention;
+  const isUntagged = isProcessed && Array.isArray(book.tags) && book.tags.length === 0;
+  const hasNoText = isProcessed && !isScanned && book.indexed_pages === 0;
+
   // Recent arrivals are worth pointing out while browsing normally. Unlike the
   // badges this card used to carry, this one is self-limiting: it appears on a
   // few books for a few days and then goes away on its own.
@@ -86,8 +95,8 @@ const BookCard = ({
 
         {/* Flags for the two states worth interrupting for. Everything else
             lives in the detail modal. */}
-        {(isNew || needsAttention || isScanned) && (
-          <div className="absolute left-2 top-2 flex gap-1">
+        {(isNew || needsAttention || isScanned || isUntagged || hasNoText) && (
+          <div className="absolute left-2 top-2 flex flex-wrap gap-1">
             {isNew && (
               <span
                 className="rounded bg-accent px-1.5 py-0.5 text-2xs font-semibold text-white shadow-sm"
@@ -110,6 +119,22 @@ const BookCard = ({
                 title="Scanned images — text is not searchable"
               >
                 Scan
+              </span>
+            )}
+            {isUntagged && (
+              <span
+                className="rounded bg-black/50 px-1.5 py-0.5 text-2xs font-semibold text-white shadow-sm"
+                title="No subject tags yet — the background tagger will get to it"
+              >
+                Untagged
+              </span>
+            )}
+            {hasNoText && (
+              <span
+                className="rounded bg-black/50 px-1.5 py-0.5 text-2xs font-semibold text-white shadow-sm"
+                title="Text not extracted yet — summaries, Ask and page search need it; extraction runs in the background"
+              >
+                No text
               </span>
             )}
           </div>

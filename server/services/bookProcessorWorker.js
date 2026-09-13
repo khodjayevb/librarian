@@ -13,6 +13,7 @@ const { parentPort } = require('worker_threads');
 const pdfProcessor = require('./pdfProcessor');
 const epubProcessor = require('./epubProcessorImproved');
 const quality = require('./metadataQuality');
+const { extractPages } = require('./pageExtraction');
 
 /**
  * The two processors report their results differently: processPDF returns a
@@ -91,12 +92,26 @@ async function process(filePath) {
   return { success: false, error: `Unsupported file type: ${ext}` };
 }
 
-parentPort.on('message', async ({ id, filePath }) => {
+/**
+ * Jobs are { id, task, ... }. 'metadata' (the default) reads a book's
+ * details from its file; 'pages' extracts its text page by page for the
+ * search index and summaries. Neither touches the database.
+ */
+async function run(job) {
+  if (job.task === 'pages') {
+    // OCR is minutes of CPU per book and is requested explicitly elsewhere;
+    // the background sweep only reads text that is already there.
+    return extractPages(job.book, { ocr: false });
+  }
+  return process(job.filePath);
+}
+
+parentPort.on('message', async (job) => {
   try {
-    parentPort.postMessage({ id, result: await process(filePath) });
+    parentPort.postMessage({ id: job.id, result: await run(job) });
   } catch (error) {
     parentPort.postMessage({
-      id,
+      id: job.id,
       result: { success: false, error: error.message }
     });
   }
