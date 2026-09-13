@@ -52,7 +52,7 @@ const DuplicateManager = ({ onLibraryChanged }) => {
       return;
     }
 
-    if (!confirm(`Merge ${removeBookIds.length} duplicate(s) into the selected book? This cannot be undone.`)) {
+    if (!confirm(`Merge ${removeBookIds.length} duplicate(s) into the selected book? Their files are moved to the Trash.`)) {
       return;
     }
 
@@ -85,7 +85,7 @@ const DuplicateManager = ({ onLibraryChanged }) => {
   };
 
   const handleRemove = async (bookId) => {
-    if (!confirm('Remove this book from the library? This cannot be undone.')) {
+    if (!confirm('Remove this book from the library? Its file is moved to the Trash.')) {
       return;
     }
 

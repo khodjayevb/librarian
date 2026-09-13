@@ -18,6 +18,7 @@ const LIST_COLUMNS = [
   'b.ocr_status', 'b.is_adult'
 ].join(', ');
 const metadataEnricher = require('../services/bookMetadataEnricher');
+const { removeBooks, removeBook } = require('../services/bookRemoval');
 const fs = require('fs');
 const path = require('path');
 
@@ -183,7 +184,7 @@ router.delete('/bulk/tags', (req, res) => {
 });
 
 // Bulk delete books
-router.delete('/bulk/delete', (req, res) => {
+router.delete('/bulk/delete', async (req, res) => {
   try {
     const { bookIds } = req.body;
 
@@ -191,12 +192,15 @@ router.delete('/bulk/delete', (req, res) => {
       return res.status(400).json({ error: 'Book IDs are required' });
     }
 
-    const query = 'DELETE FROM books WHERE id IN (' + bookIds.map(() => '?').join(',') + ')';
-    const result = db.prepare(query).run(...bookIds);
+    const results = await removeBooks(bookIds);
+    const deleted = results.filter((r) => r.removed).length;
+    const failed = results.filter((r) => !r.removed);
 
     res.json({
-      message: `Successfully deleted ${result.changes} book(s)`,
-      deleted: result.changes
+      message: `Deleted ${deleted} book(s); files moved to the Trash` +
+        (failed.length ? `; ${failed.length} could not be removed` : ''),
+      deleted,
+      failed
     });
   } catch (error) {
     console.error('Error bulk deleting books:', error);
@@ -579,15 +583,15 @@ router.put('/:id/page-offset', (req, res) => {
 });
 
 // Delete book
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const result = db.prepare('DELETE FROM books WHERE id = ?').run(req.params.id);
+    const result = await removeBook(req.params.id);
 
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Book not found' });
+    if (!result.removed) {
+      return res.status(404).json({ error: result.error || 'Book not found' });
     }
 
-    res.json({ message: 'Book deleted successfully' });
+    res.json({ message: 'Book deleted; file moved to the Trash', trashed: result.trashed });
   } catch (error) {
     console.error('Error deleting book:', error);
     res.status(500).json({ error: 'Failed to delete book' });

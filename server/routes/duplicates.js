@@ -101,7 +101,7 @@ router.post('/merge', async (req, res) => {
       success: true,
       kept: result.kept,
       removed: result.removed,
-      message: `Merged ${result.removed} duplicate(s) into book #${keepBookId}`
+      message: `Merged ${result.removed} duplicate(s) into book #${keepBookId}; their files are in the Trash`
     });
   } catch (error) {
     console.error('Error merging duplicates:', error);
@@ -127,22 +127,15 @@ router.delete('/remove', async (req, res) => {
       });
     }
 
-    const db = require('../database/init');
-    let removed = 0;
-
-    for (const bookId of bookIds) {
-      try {
-        db.deleteBook(bookId);
-        removed++;
-      } catch (e) {
-        console.error(`Failed to delete book ${bookId}:`, e);
-      }
-    }
+    const { removeBooks } = require('../services/bookRemoval');
+    const results = await removeBooks(bookIds);
+    const removed = results.filter((r) => r.removed).length;
 
     res.json({
       success: true,
-      removed: removed,
-      message: `Removed ${removed} book(s) from the library`
+      removed,
+      failed: results.filter((r) => !r.removed),
+      message: `Removed ${removed} book(s) from the library; files moved to the Trash`
     });
   } catch (error) {
     console.error('Error removing duplicate books:', error);

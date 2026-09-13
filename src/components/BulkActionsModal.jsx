@@ -22,7 +22,7 @@ function BulkActionsModal({ isOpen, onClose, selectedBooks, onBulkAction, allTag
         }
         break;
       case 'delete':
-        if (window.confirm(`Are you sure you want to delete ${selectedBooks.length} book(s)?`)) {
+        if (window.confirm(`Delete ${selectedBooks.length} book(s)? Their files are moved to the Trash.`)) {
           await onBulkAction('delete', {});
         }
         break;

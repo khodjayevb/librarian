@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const db = require('../database/init');
+const { removeBook } = require('../services/bookRemoval');
 
 class DuplicateDetector {
   constructor() {
@@ -324,8 +325,9 @@ class DuplicateDetector {
         db.updateBook(keepBookId, updates);
       }
 
-      // Delete the duplicate book
-      db.deleteBook(bookToRemove.id);
+      // Delete the duplicate book — file included, or the next scan brings
+      // it back as a new one.
+      await removeBook(bookToRemove.id);
     }
 
     return {
