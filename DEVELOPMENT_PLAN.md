@@ -4,8 +4,8 @@
 
 **Name:** Librarian
 **Purpose:** Personal book catalog application for macOS
-**Status:** Phase 15 - Local AI, and a pass over correctness
-**Last Updated:** 2026-09-08
+**Status:** Phase 16 - Always on
+**Last Updated:** 2026-09-14
 
 ### Core Requirements
 
@@ -88,15 +88,10 @@
 
 ### 🚧 Next Priority Tasks
 
-1. **PDF-to-Image Conversion for OCR**
-   - Add pdf-poppler or pdf2pic for PDF page extraction
-   - Convert PDF pages to images for Tesseract processing
-   - Update OCR pipeline to handle image conversion
-   - Re-enable background OCR queue processing
-2. **Smart Collections**
-   - Create collections based on rules
-   - Auto-update when new books match criteria
-   - Custom rule builder UI
+1. **Duplicates** — the detector missed a byte-identical copy planted for a
+   test (it hashes lazily); hash on ingest so Find Duplicates sees everything
+2. **The 11 books no model can tag** — decide whether the vocabulary needs
+   `operating-systems`, `computer-graphics`, `quantum-computing`, or leave them
 3. **Reading Statistics Dashboard**
    - Daily/weekly/monthly reading stats
    - Books completed tracking
@@ -104,9 +99,11 @@
 
 ### 📝 Known Issues
 
-- Thumbnail preservation issue when adding books to collections (documented in TODO-thumbnail-issue.md)
 - PDF viewer worker loading sometimes requires page refresh
-- OCR requires PDF-to-image conversion (Tesseract.js can't read PDFs directly) - **OCR queue processing temporarily disabled**
+- The Full Disk Access grant for `node` is per binary; an nvm upgrade silently
+  breaks the launchd agent's scan until it is re-granted (see README)
+- The first request after a few idle minutes waits ~5-10s for Ollama to
+  reload the 24GB model
 
 ---
 
@@ -460,6 +457,79 @@ opinion where one is worth having.
 - [x] Background tasks default to off against a non-default database
 - [x] Stored schema repaired — a migration had written double-quoted string
       literals, which meant VACUUM failed on the database entirely
+
+### Phase 16: Always On ✅ COMPLETE
+
+The backend runs as a launchd agent and the library looks after itself:
+every book that lands in the folder gets a cover, metadata, subject tags and
+its full text without anyone asking, and the app cannot be taken down by
+a bad file. Started from one report — "if we download many books this app
+hangs, I am not seeing thumbnails" — which turned out to be a crash.
+
+**The crash**
+
+- [x] Two thumbnail jobs for one book — the watcher's and the periodic
+      sweep's — shared a temp file; pdf2pic `statSync`s it from a raw
+      callback, so the loser threw an uncaught exception and killed the
+      server. Nothing restarted it; the UI polled a dead port and looked
+      frozen. Unique temp names, one in-flight job per book, a Ghostscript
+      timeout, and uncaught errors logged to `error.log` with the server
+      kept running
+- [x] `fs.stat` in the watcher guarded — an unhandled rejection is fatal on
+      Node 22 — and a rewritten file gets its cover and review flag reset
+- [x] 773 books that had been waiting since the crash ingested with covers
+
+**The service**
+
+- [x] `launchd/com.khodjayevb.bibliotheka.plist`: KeepAlive, Homebrew on
+      PATH for gm/gs, logs under `logs/`. `npm run ui` starts the window
+      without a second, colliding backend
+- [x] `node` needs Full Disk Access: under launchd its first `readdir` of the
+      external volume blocked forever with no error — TCC holding the
+      syscall for a prompt no background process can show
+- [x] Unmounting the drive fires `unlink` per file; deletions are ignored
+      while the books root is missing, or the library would have emptied
+
+**Coverage**
+
+- [x] **Collections showed no covers** — the endpoint returned bare rows and
+      the card reads `thumbnail_url`; one `decorateBooks()` for every
+      book-returning endpoint. The old TODO-thumbnail-issue.md described
+      this and is gone
+- [x] **398 books gemma3:4b could not tag** — its answer never landed on the
+      vocabulary, and at temperature 0 never would. Forcing the reply onto
+      the list with a schema enum made Prolog and regex "computer-vision";
+      escalating the misses to `qwen3.6:35b-a3b` placed 20/20. 11 remain
+- [x] **Text extraction in the background** — 4270 of 5101 books had none,
+      so no summary, Ask or page search reached them. Extraction in the
+      worker pool, rows written on the main thread; the API answered in 3ms
+      throughout. 4257 books in about 90 minutes
+- [x] **OCR in the background** — 351 scanned books, 117,000 pages, one at a
+      time under `nice` in a child process. Apple's Vision framework via a
+      60-line Swift tool: a 56-page Russian scan in 18s at 91% confidence
+      against Tesseract's 110s on four cores at 55%, and CoreGraphics
+      decodes the JBIG2/JPEG 2000 scans pdf.js rendered blank. All 351 done
+      overnight. 5088/5103 books now have text; 1,637,455 pages indexed
+- [x] **`Untagged` and `No text` badges** on the card, self-limiting like
+      `New` and `Scan`: they mark the stragglers, not the norm
+
+**The model**
+
+- [x] `qwen3.6:35b-a3b` is the default. Measured on one book: gemma3:4b
+      summarised in 8.9s but credited the subtitle as the author and cited
+      no pages; the 35B took 17.1s, named the authors and cited six. The
+      27B dense model matched it at 73.5s. Mixture-of-experts, ~3B active,
+      ~24GB resident
+- [x] The adult-content check keeps gemma as its cheap first pass
+      (`OLLAMA_ADULT_MODEL`) so the big model is woken by a yes rather than
+      verifying itself
+
+**Deleting actually deletes**
+
+- [x] Every delete — single, bulk, merge, remove duplicate — removed only
+      the row; with the hourly rescan the file came back as a new book
+      within the hour. One removal now moves the file to the Trash (the
+      volume's `.Trashes`, where the Finder puts it), then the row and cover
 
 ---
 
@@ -881,6 +951,29 @@ Bibliotheka/
 ---
 
 ## Changelog
+
+### 2026-09-14 - Phase 16 - Always On
+
+- **Server crash on ingest fixed** — two thumbnail jobs for one book raced
+  on a temp file inside pdf2pic; the UI had been polling a dead port.
+  Uncaught errors are now logged and survived.
+- **Backend as a launchd agent**, with `npm run ui` for the window. `node`
+  needs Full Disk Access or its first read of the external volume blocks
+  silently. Unmounting the drive no longer empties the library.
+- **Covers in collections** — every book-returning endpoint decorates rows
+  the same way.
+- **Tagging escalates** to `qwen3.6:35b-a3b` when `gemma3:4b` cannot place
+  a book: 398 untagged → 11.
+- **Text extracted in the background** for every book, in worker threads:
+  831 → 5088 of 5103 books with text.
+- **OCR in the background** with Apple Vision, one book at a time under
+  `nice`: 351 scanned books, 117k pages, overnight. 6× Tesseract's speed at
+  higher accuracy on Cyrillic.
+- **`Untagged` / `No text` badges** on the card.
+- **`qwen3.6:35b-a3b` is the default model** for summaries, Ask, compare and
+  tags; measured against gemma3:4b and the 27B dense model.
+- **Deleting a book moves its file to the Trash**; merging duplicates no
+  longer undoes itself on the next scan.
 
 ### 2026-09-08 - Phase 15 - Local AI and Correctness
 
@@ -1319,4 +1412,4 @@ Bibliotheka/
 
 ---
 
-*This is a living document. Last major update: Phase 14 - AI-Powered Summaries implementation.*
+*This is a living document. Last major update: Phase 16 - Always On.*
