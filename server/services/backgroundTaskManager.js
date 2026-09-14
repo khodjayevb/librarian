@@ -16,6 +16,7 @@ const ENRICH_DELAY_MS = Number(process.env.ENRICH_DELAY_MS) || 1000;
 const ADULT_BATCH_SIZE = Number(process.env.ADULT_BATCH_SIZE) || 20;
 const TAG_BATCH_SIZE = Number(process.env.TAG_BATCH_SIZE) || 20;
 const INDEX_BATCH_SIZE = Number(process.env.INDEX_BATCH_SIZE) || 10;
+const HASH_BATCH_SIZE = Number(process.env.HASH_BATCH_SIZE) || 50;
 const OCR_BACKGROUND = (process.env.OCR_BACKGROUND || 'on').toLowerCase() !== 'off';
 const OCR_NICE = Number(process.env.OCR_NICE) || 15;
 // A 3000-page scan is under two hours at the measured two seconds a page.
@@ -45,6 +46,8 @@ class BackgroundTaskManager extends EventEmitter {
     this.isTagging = false;
     this.isIndexing = false;
     this.isOcring = false;
+    this.isHashing = false;
+    this.hashFailed = new Set();
     this.warnedNoOllama = false;
     // Books whose text could not be read this run. Retried after a restart,
     // which is soon enough for a file that has since been fixed.
@@ -325,6 +328,13 @@ class BackgroundTaskManager extends EventEmitter {
     }, 60000);
 
     setTimeout(() => this.indexUnindexedBooks(), 45000);
+
+    // Digest whatever was ingested before file hashes existed.
+    this.hashInterval = setInterval(() => {
+      this.hashUnhashedBooks();
+    }, 300000);
+
+    setTimeout(() => this.hashUnhashedBooks(), 20000);
 
     // Scanned books, one at a time, in a low-priority child process. Days of
     // work for a large library, so it only starts once the text books are
@@ -701,6 +711,8 @@ class BackgroundTaskManager extends EventEmitter {
         // the event loop and stall every in-flight API request.
         const result = await processorPool.process(book.file_path);
 
+        if (result.fileHash) this.recordHash(bookId, result.fileHash);
+
         if (result.success) {
           // Update database with extracted metadata
           db.prepare(`
@@ -735,6 +747,70 @@ class BackgroundTaskManager extends EventEmitter {
       }
     } catch (error) {
       console.error(`Error processing book ${bookId}:`, error);
+    }
+  }
+
+  /**
+   * Store a file's digest and say so if it makes the book a copy of one
+   * already on the shelf — the moment the second copy arrives is the moment
+   * someone can still remember downloading it.
+   */
+  recordHash(bookId, fileHash) {
+    db.prepare('UPDATE books SET file_hash = ? WHERE id = ?').run(fileHash, bookId);
+
+    const twin = db.prepare(
+      'SELECT id, title FROM books WHERE file_hash = ? AND id != ? LIMIT 1'
+    ).get(fileHash, bookId);
+    if (twin) {
+      console.log(`   👯 Book ${bookId} is a byte-for-byte copy of #${twin.id} "${twin.title}" — see Find Duplicates`);
+    }
+  }
+
+  /**
+   * Digest books that predate the file_hash column. I/O-bound rather than
+   * CPU-bound, so one at a time through the pool is plenty, and the whole
+   * library is a few minutes' reading.
+   */
+  async hashUnhashedBooks() {
+    if (this.isHashing) return;
+    this.isHashing = true;
+
+    try {
+      const batch = db.prepare(`
+        SELECT id, file_path FROM books
+        WHERE file_hash IS NULL AND needs_review = 0
+        ORDER BY id
+        LIMIT ?
+      `).all(HASH_BATCH_SIZE + this.hashFailed.size)
+        .filter((book) => !this.hashFailed.has(book.id))
+        .slice(0, HASH_BATCH_SIZE);
+
+      if (batch.length === 0) return;
+
+      for (const book of batch) {
+        if (!(await this.fileExists(book.file_path))) {
+          this.markMissing(book.id);
+          continue;
+        }
+        const result = await processorPool.hashFile(book.file_path);
+        if (result.success && result.fileHash) {
+          this.recordHash(book.id, result.fileHash);
+        } else {
+          this.hashFailed.add(book.id);
+          console.error(`   ❌ could not hash ${path.basename(book.file_path)}: ${result.error || 'unknown error'}`);
+        }
+      }
+
+      const left = db.prepare('SELECT COUNT(*) AS n FROM books WHERE file_hash IS NULL AND needs_review = 0').get().n;
+      console.log(`#️⃣  Hashed ${batch.length} book(s), ${left} to go`);
+
+      if (batch.length === HASH_BATCH_SIZE) {
+        setTimeout(() => this.hashUnhashedBooks(), 500);
+      }
+    } catch (error) {
+      console.error('Hashing pass failed:', error.message);
+    } finally {
+      this.isHashing = false;
     }
   }
 
@@ -872,6 +948,7 @@ class BackgroundTaskManager extends EventEmitter {
     if (this.tagInterval) clearInterval(this.tagInterval);
     if (this.indexInterval) clearInterval(this.indexInterval);
     if (this.ocrInterval) clearInterval(this.ocrInterval);
+    if (this.hashInterval) clearInterval(this.hashInterval);
 
     await processorPool.shutdown();
 

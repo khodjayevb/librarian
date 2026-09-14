@@ -107,6 +107,11 @@ class BookProcessorPool {
     return this.submit({ task: 'pages', book });
   }
 
+  /** Digest a file; resolves { success, fileHash }. */
+  hashFile(filePath) {
+    return this.submit({ task: 'hash', filePath });
+  }
+
   submit(payload) {
     this.start();
 

@@ -88,11 +88,9 @@
 
 ### 🚧 Next Priority Tasks
 
-1. **Duplicates** — the detector missed a byte-identical copy planted for a
-   test (it hashes lazily); hash on ingest so Find Duplicates sees everything
-2. **The 11 books no model can tag** — decide whether the vocabulary needs
+1. **The 11 books no model can tag** — decide whether the vocabulary needs
    `operating-systems`, `computer-graphics`, `quantum-computing`, or leave them
-3. **Reading Statistics Dashboard**
+2. **Reading Statistics Dashboard**
    - Daily/weekly/monthly reading stats
    - Books completed tracking
    - Reading velocity and patterns
@@ -530,6 +528,19 @@ hangs, I am not seeing thumbnails" — which turned out to be a crash.
       the row; with the hourly rescan the file came back as a new book
       within the hour. One removal now moves the file to the Trash (the
       volume's `.Trashes`, where the Finder puts it), then the row and cover
+
+**Find Duplicates finds them**
+
+- [x] Files are digested (SHA-256) on ingest, in the worker, and the
+      library backfilled — 93GB in about eight minutes. Two copies of one
+      file are a certain match however they are named; 13 such pairs found
+- [x] `\w` is ASCII-only in JavaScript, so title normalisation reduced every
+      Russian title containing "PHP" to "php": eleven unrelated PHP books
+      and fourteen Python books were "duplicates". Unicode-aware now
+- [x] Junk titles — fourteen books called `tit.indd`, ten `Урок`, the
+      "Microsoft Word - x.doc" family — no longer group by title
+- [x] 112s → 3s: titles normalised once, an early-exit Levenshtein, and the
+      author comparison only for pairs whose titles already match
 
 ---
 
@@ -974,6 +985,9 @@ Bibliotheka/
   tags; measured against gemma3:4b and the 27B dense model.
 - **Deleting a book moves its file to the Trash**; merging duplicates no
   longer undoes itself on the next scan.
+- **Find Duplicates hashes files on ingest** and matches identical files
+  with certainty; Unicode-aware title matching ends the false "PHP" and
+  "Python" groups; 112s → 3s.
 
 ### 2026-09-08 - Phase 15 - Local AI and Correctness
 

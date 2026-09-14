@@ -359,6 +359,16 @@ const runMigrations = () => {
     db.exec('ALTER TABLE books ADD COLUMN adult_checked INTEGER DEFAULT 0');
     console.log('✅ Added adult_checked column to books table');
   }
+
+  // A digest of the file, computed on ingest, so two copies of one file are
+  // found as duplicates however differently they are named. The detector
+  // used to go by title alone and missed a byte-identical copy.
+  const hasFileHash = columns.some(col => col.name === 'file_hash');
+  if (!hasFileHash) {
+    db.exec('ALTER TABLE books ADD COLUMN file_hash TEXT');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash)');
+    console.log('✅ Added file_hash column to books table');
+  }
 };
 
 // Initialize tables

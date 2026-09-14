@@ -11,63 +11,70 @@ class DuplicateDetector {
   }
 
   /**
-   * Calculate Levenshtein distance between two strings
+   * Levenshtein distance, two rows at a time, giving up as soon as it is
+   * certain to exceed maxDistance. Comparing every pair of a few thousand
+   * titles is millions of calls, and almost all of them are nowhere close.
    */
-  levenshteinDistance(str1, str2) {
+  levenshteinDistance(str1, str2, maxDistance = Infinity) {
     const m = str1.length;
     const n = str2.length;
-    const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+    if (Math.abs(m - n) > maxDistance) return maxDistance + 1;
 
-    for (let i = 0; i <= m; i++) dp[i][0] = i;
-    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    let previous = new Array(n + 1);
+    let current = new Array(n + 1);
+    for (let j = 0; j <= n; j++) previous[j] = j;
 
     for (let i = 1; i <= m; i++) {
+      current[0] = i;
+      let rowMin = i;
       for (let j = 1; j <= n; j++) {
-        if (str1[i - 1] === str2[j - 1]) {
-          dp[i][j] = dp[i - 1][j - 1];
-        } else {
-          dp[i][j] = Math.min(
-            dp[i - 1][j] + 1,    // deletion
-            dp[i][j - 1] + 1,    // insertion
-            dp[i - 1][j - 1] + 1 // substitution
-          );
-        }
+        const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+        current[j] = Math.min(
+          previous[j] + 1,        // deletion
+          current[j - 1] + 1,     // insertion
+          previous[j - 1] + cost  // substitution
+        );
+        if (current[j] < rowMin) rowMin = current[j];
       }
+      if (rowMin > maxDistance) return maxDistance + 1;
+      [previous, current] = [current, previous];
     }
 
-    return dp[m][n];
+    return previous[n];
   }
 
   /**
-   * Calculate similarity ratio between two strings
+   * Similarity ratio between two already-normalised strings. With a
+   * threshold, returns 0 early for anything that cannot reach it.
    */
-  similarity(str1, str2) {
+  similarity(str1, str2, threshold = 0) {
     if (!str1 || !str2) return 0;
-
-    str1 = str1.toLowerCase().trim();
-    str2 = str2.toLowerCase().trim();
-
     if (str1 === str2) return 1;
 
-    const distance = this.levenshteinDistance(str1, str2);
     const maxLength = Math.max(str1.length, str2.length);
+    const maxDistance = Math.floor((1 - threshold) * maxLength);
+    const distance = this.levenshteinDistance(str1, str2, maxDistance);
 
-    if (maxLength === 0) return 1;
-
+    if (distance > maxDistance) return 0;
     return 1 - (distance / maxLength);
   }
 
   /**
-   * Normalize title for comparison
+   * Normalize title for comparison.
+   *
+   * Letters of every script are kept: \\w is ASCII-only in JavaScript, and
+   * stripping "everything else" reduced any Russian title containing "PHP"
+   * to the single word "php", so eleven unrelated PHP books were one
+   * duplicate group.
    */
   normalizeTitle(title) {
     if (!title) return '';
 
     return title
       .toLowerCase()
-      .replace(/[^\w\s]/g, '') // Remove punctuation
-      .replace(/\s+/g, ' ')     // Normalize whitespace
-      .replace(/^(the|a|an)\s+/i, '') // Remove common articles
+      .replace(/[^\p{L}\p{N}\s]/gu, '') // Remove punctuation
+      .replace(/\s+/g, ' ')            // Normalize whitespace
+      .replace(/^(the|a|an)\s+/i, '')  // Remove common articles
       .trim();
   }
 
@@ -79,9 +86,33 @@ class DuplicateDetector {
 
     return author
       .toLowerCase()
-      .replace(/[^\w\s]/g, '') // Remove punctuation
-      .replace(/\s+/g, ' ')     // Normalize whitespace
+      .replace(/[^\p{L}\p{N}\s]/gu, '') // Remove punctuation
+      .replace(/\s+/g, ' ')            // Normalize whitespace
       .trim();
+  }
+
+  /**
+   * Is this title specific enough that two books sharing it are probably
+   * the same book? Fourteen books were called "tit.indd" — the layout file
+   * their publisher exported them from — and ten "Урок"; they have nothing
+   * in common but bad metadata. Byte-identical files match regardless.
+   */
+  isMatchableTitle(normalized) {
+    if (!normalized) return false;
+    if (/\.(indd|qxd|docx?|fm|pdf|epub)$/.test(normalized)) return false;
+    // What Word and PowerPoint write into a PDF's title field.
+    if (/^(microsoft (word|powerpoint)|слайд \d|slide \d|untitled|без названия)/.test(normalized)) return false;
+    return normalized.includes(' ') || normalized.length >= 10;
+  }
+
+  /** The book with its comparison keys computed once. */
+  prepare(book) {
+    if (book._title === undefined) {
+      book._title = this.normalizeTitle(book.title);
+      book._author = this.normalizeAuthor(book.author);
+      book._matchable = this.isMatchableTitle(book._title);
+    }
+    return book;
   }
 
   /**
@@ -99,97 +130,137 @@ class DuplicateDetector {
   }
 
   /**
-   * Find all duplicate groups in the library
+   * Why two books look like the same one, or null if they do not.
+   *
+   * An identical file is certain whatever the titles say — the two copies
+   * are usually named differently, which is how they came to be two. Short
+   * of that, titles and authors have to agree closely.
+   */
+  compare(a, b) {
+    if (a.file_hash && a.file_hash === b.file_hash) {
+      return { confidence: 1, reasons: ['Identical file'] };
+    }
+
+    this.prepare(a);
+    this.prepare(b);
+    if (!a._matchable || !b._matchable) return null;
+
+    // Below the threshold there is no match whatever the authors say, so
+    // the title comparison is the only one most pairs ever get.
+    const titleSimilarity = this.similarity(a._title, b._title, this.titleSimilarityThreshold);
+    if (titleSimilarity < this.titleSimilarityThreshold) return null;
+
+    let authorSimilarity = 0;
+    if (a.author && b.author) {
+      authorSimilarity = this.similarity(a._author, b._author);
+      if (authorSimilarity < this.authorSimilarityThreshold) return null;
+    }
+
+    const reasons = [];
+    if (titleSimilarity >= 0.95) {
+      reasons.push('Nearly identical title');
+    } else if (titleSimilarity >= this.titleSimilarityThreshold) {
+      reasons.push('Similar title');
+    }
+    if (authorSimilarity >= 0.95) {
+      reasons.push('Same author');
+    } else if (authorSimilarity >= this.authorSimilarityThreshold) {
+      reasons.push('Similar author');
+    }
+    if (a.file_size === b.file_size) {
+      reasons.push('Same file size');
+    }
+    if (a.page_count === b.page_count && a.page_count > 0) {
+      reasons.push('Same page count');
+    }
+
+    return { confidence: (titleSimilarity + authorSimilarity) / 2, reasons };
+  }
+
+  /**
+   * Find all duplicate groups in the library.
+   *
+   * Identical files are grouped by hash first — an index lookup — and then
+   * every pair is compared by title. A book linked to a group by either
+   * route joins it, so a copy under a different name and a near-duplicate
+   * under the same one end up on the same card.
    */
   async findAllDuplicates() {
     const books = db.getAllBooks();
-    const duplicateGroups = [];
-    const processed = new Set();
+    const byId = new Map(books.map((b) => [b.id, b]));
 
-    for (let i = 0; i < books.length; i++) {
-      if (processed.has(books[i].id)) continue;
-
-      const duplicates = [];
-      const book1 = books[i];
-      const normalized1Title = this.normalizeTitle(book1.title);
-      const normalized1Author = this.normalizeAuthor(book1.author);
-
-      for (let j = i + 1; j < books.length; j++) {
-        if (processed.has(books[j].id)) continue;
-
-        const book2 = books[j];
-        const normalized2Title = this.normalizeTitle(book2.title);
-        const normalized2Author = this.normalizeAuthor(book2.author);
-
-        // Check title similarity
-        const titleSimilarity = this.similarity(normalized1Title, normalized2Title);
-
-        // Check author similarity (if both have authors)
-        let authorSimilarity = 0;
-        if (book1.author && book2.author) {
-          authorSimilarity = this.similarity(normalized1Author, normalized2Author);
-        }
-
-        // Consider as potential duplicate if:
-        // 1. Titles are very similar AND authors are similar (if present)
-        // 2. OR exact title match
-        const isPotentialDuplicate =
-          (titleSimilarity >= this.titleSimilarityThreshold &&
-           (!book1.author || !book2.author || authorSimilarity >= this.authorSimilarityThreshold)) ||
-          (normalized1Title === normalized2Title && normalized1Title !== '');
-
-        if (isPotentialDuplicate) {
-          if (duplicates.length === 0) {
-            duplicates.push({
-              book: book1,
-              confidence: 1.0,
-              reasons: ['Original']
-            });
-            processed.add(book1.id);
-          }
-
-          const confidence = (titleSimilarity + authorSimilarity) / 2;
-          const reasons = [];
-
-          if (titleSimilarity >= 0.95) {
-            reasons.push('Nearly identical title');
-          } else if (titleSimilarity >= this.titleSimilarityThreshold) {
-            reasons.push('Similar title');
-          }
-
-          if (authorSimilarity >= 0.95) {
-            reasons.push('Same author');
-          } else if (authorSimilarity >= this.authorSimilarityThreshold) {
-            reasons.push('Similar author');
-          }
-
-          if (book1.file_size === book2.file_size) {
-            reasons.push('Same file size');
-          }
-
-          if (book1.page_count === book2.page_count && book1.page_count > 0) {
-            reasons.push('Same page count');
-          }
-
-          duplicates.push({
-            book: book2,
-            confidence: confidence,
-            reasons: reasons
-          });
-          processed.add(book2.id);
-        }
+    // Union-find over book ids.
+    const parent = new Map(books.map((b) => [b.id, b.id]));
+    const find = (id) => {
+      while (parent.get(id) !== id) {
+        parent.set(id, parent.get(parent.get(id)));
+        id = parent.get(id);
       }
+      return id;
+    };
+    const union = (a, b) => parent.set(find(a), find(b));
 
-      if (duplicates.length > 1) {
-        duplicateGroups.push({
-          groupId: `group_${i}`,
-          count: duplicates.length,
-          duplicates: duplicates.sort((a, b) => b.confidence - a.confidence)
-        });
+    // The best reason each book has for being in its group.
+    const matches = new Map();
+    const note = (id, match) => {
+      const current = matches.get(id);
+      if (!current || match.confidence > current.confidence) matches.set(id, match);
+    };
+
+    const byHash = new Map();
+    for (const book of books) {
+      if (!book.file_hash) continue;
+      const twin = byHash.get(book.file_hash);
+      if (twin) {
+        union(book.id, twin.id);
+        const match = this.compare(book, twin);
+        note(book.id, match);
+        note(twin.id, match);
+      } else {
+        byHash.set(book.file_hash, book);
       }
     }
 
-    return duplicateGroups;
+    for (let i = 0; i < books.length; i++) {
+      for (let j = i + 1; j < books.length; j++) {
+        if (find(books[i].id) === find(books[j].id)) continue;
+        const match = this.compare(books[i], books[j]);
+        if (!match) continue;
+        union(books[i].id, books[j].id);
+        note(books[i].id, match);
+        note(books[j].id, match);
+      }
+    }
+
+    const groups = new Map();
+    for (const book of books) {
+      const root = find(book.id);
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root).push(book);
+    }
+
+    const duplicateGroups = [];
+    for (const [root, members] of groups) {
+      if (members.length < 2) continue;
+
+      // The earliest-added copy is the original; the rest are judged against
+      // the group they landed in.
+      members.sort((a, b) => String(a.date_added || '').localeCompare(String(b.date_added || '')) || a.id - b.id);
+      const [original, ...rest] = members;
+
+      duplicateGroups.push({
+        groupId: `group_${root}`,
+        count: members.length,
+        duplicates: [
+          { book: original, confidence: 1.0, reasons: ['Original'] },
+          ...rest
+            .map((book) => ({ book, ...(matches.get(book.id) || { confidence: 0, reasons: [] }) }))
+            .sort((a, b) => b.confidence - a.confidence)
+        ]
+      });
+    }
+
+    return duplicateGroups.sort((a, b) => b.duplicates[1].confidence - a.duplicates[1].confidence);
   }
 
   /**
@@ -201,59 +272,11 @@ class DuplicateDetector {
       throw new Error('Book not found');
     }
 
-    const allBooks = db.getAllBooks();
     const duplicates = [];
-    const normalizedTitle = this.normalizeTitle(book.title);
-    const normalizedAuthor = this.normalizeAuthor(book.author);
-
-    for (const otherBook of allBooks) {
-      if (otherBook.id === bookId) continue;
-
-      const otherNormalizedTitle = this.normalizeTitle(otherBook.title);
-      const otherNormalizedAuthor = this.normalizeAuthor(otherBook.author);
-
-      const titleSimilarity = this.similarity(normalizedTitle, otherNormalizedTitle);
-      let authorSimilarity = 0;
-
-      if (book.author && otherBook.author) {
-        authorSimilarity = this.similarity(normalizedAuthor, otherNormalizedAuthor);
-      }
-
-      const isPotentialDuplicate =
-        (titleSimilarity >= this.titleSimilarityThreshold &&
-         (!book.author || !otherBook.author || authorSimilarity >= this.authorSimilarityThreshold)) ||
-        (normalizedTitle === otherNormalizedTitle && normalizedTitle !== '');
-
-      if (isPotentialDuplicate) {
-        const confidence = (titleSimilarity + authorSimilarity) / 2;
-        const reasons = [];
-
-        if (titleSimilarity >= 0.95) {
-          reasons.push('Nearly identical title');
-        } else if (titleSimilarity >= this.titleSimilarityThreshold) {
-          reasons.push('Similar title');
-        }
-
-        if (authorSimilarity >= 0.95) {
-          reasons.push('Same author');
-        } else if (authorSimilarity >= this.authorSimilarityThreshold) {
-          reasons.push('Similar author');
-        }
-
-        if (book.file_size === otherBook.file_size) {
-          reasons.push('Same file size');
-        }
-
-        if (book.page_count === otherBook.page_count && book.page_count > 0) {
-          reasons.push('Same page count');
-        }
-
-        duplicates.push({
-          book: otherBook,
-          confidence: confidence,
-          reasons: reasons
-        });
-      }
+    for (const otherBook of db.getAllBooks()) {
+      if (otherBook.id === book.id) continue;
+      const match = this.compare(book, otherBook);
+      if (match) duplicates.push({ book: otherBook, ...match });
     }
 
     return duplicates.sort((a, b) => b.confidence - a.confidence);

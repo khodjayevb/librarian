@@ -49,4 +49,20 @@ async function extractPages(book, { ocr = true, onProgress } = {}) {
   return { source: 'PDF', ...(await properPdfExtractor.extractPages(book.file_path, { verbose: false })) };
 }
 
-module.exports = { extractPages };
+/**
+ * SHA-256 of a file, streamed. Lives here with the other file-reading work
+ * that runs off the main thread: hashing a 300MB PDF is a second of CPU.
+ */
+function hashFile(filePath) {
+  const crypto = require('crypto');
+  const fs = require('fs');
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    fs.createReadStream(filePath)
+      .on('data', (chunk) => hash.update(chunk))
+      .on('end', () => resolve(hash.digest('hex')))
+      .on('error', reject);
+  });
+}
+
+module.exports = { extractPages, hashFile };

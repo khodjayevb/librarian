@@ -13,7 +13,7 @@ const { parentPort } = require('worker_threads');
 const pdfProcessor = require('./pdfProcessor');
 const epubProcessor = require('./epubProcessorImproved');
 const quality = require('./metadataQuality');
-const { extractPages } = require('./pageExtraction');
+const { extractPages, hashFile } = require('./pageExtraction');
 
 /**
  * The two processors report their results differently: processPDF returns a
@@ -94,8 +94,9 @@ async function process(filePath) {
 
 /**
  * Jobs are { id, task, ... }. 'metadata' (the default) reads a book's
- * details from its file; 'pages' extracts its text page by page for the
- * search index and summaries. Neither touches the database.
+ * details from its file and digests it; 'pages' extracts its text page by
+ * page for the search index and summaries; 'hash' only digests. None of
+ * them touch the database.
  */
 async function run(job) {
   if (job.task === 'pages') {
@@ -103,7 +104,17 @@ async function run(job) {
     // the background sweep only reads text that is already there.
     return extractPages(job.book, { ocr: false });
   }
-  return process(job.filePath);
+  if (job.task === 'hash') {
+    return { success: true, fileHash: await hashFile(job.filePath) };
+  }
+
+  // The digest comes back with the metadata whether or not parsing worked:
+  // a file the parser cannot read is still a file that can be a duplicate.
+  const [result, fileHash] = await Promise.all([
+    process(job.filePath),
+    hashFile(job.filePath).catch(() => null)
+  ]);
+  return { ...result, fileHash };
 }
 
 parentPort.on('message', async (job) => {
